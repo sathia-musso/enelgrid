@@ -1,0 +1,7 @@
+{
+  "name": "EnelGrid",
+  "country": "it",
+  "domains": ["sensor"],
+  "homeassistant": "2023.1.0",
+  "render_readme": true
+}
