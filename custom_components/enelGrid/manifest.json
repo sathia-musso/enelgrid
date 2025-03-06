@@ -8,5 +8,6 @@
   "codeowners": ["@sathia-musso"],
   "config_flow": true,
   "iot_class": "cloud_polling",
-  "loggers": ["custom_components.enelGrid"]
+  "loggers": ["custom_components.enelGrid"],
+  "issue_tracker": "https://github.com/sathia-musso/enelGrid/issues"
 }
