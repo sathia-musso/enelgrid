@@ -1,0 +1,17 @@
+homeassistant
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.DS_Store
+.vscode/
+.idea/
+.env
+/home-assistant_v2.db
+*.log
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.yaml.bak
+secrets.yaml
