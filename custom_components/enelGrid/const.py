@@ -1,6 +1,6 @@
-DOMAIN = "enelGrid"
+DOMAIN = "enelgrid"
 
-CONF_POD = "pod, IT1234567890"
-CONF_USER_NUMBER = "Numero Utente"
-CONF_USERNAME = "Username o email"
-CONF_PASSWORD = "Password"
+CONF_POD = "pod: IT1234567890"
+CONF_USER_NUMBER = "numero utente"
+CONF_USERNAME = "username"
+CONF_PASSWORD = "password"

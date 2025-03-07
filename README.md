@@ -14,9 +14,9 @@ This custom integration for Home Assistant retrieves and imports **hourly and da
 
 ### Manual Installation
 
-1. Copy the **`enelGrid`** folder into:
+1. Copy the **`enelgrid`** folder into:
     ```
-    config/custom_components/enelGrid
+    config/custom_components/enelgrid
     ```
 2. Restart Home Assistant.
 3. In Home Assistant, go to:  
@@ -66,7 +66,7 @@ These credentials are stored securely in Home Assistant's `config_entries` stora
 
 ## 🧑‍💻 Developer
 
-This integration was developed by [Sathia Francesco Musso](https://github.com/sathia-musso/enelGrid/).  
+This integration was developed by [Sathia Francesco Musso](https://github.com/sathia-musso/enelgrid/).  
 Contributions and feedback are welcome!
 
 ---

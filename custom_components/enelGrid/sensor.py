@@ -22,7 +22,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
     consumption_sensor = EnelGridConsumptionSensor(hass, entry)
     monthly_sensor = EnelGridMonthlySensor(pod)
 
-    hass.data.setdefault("enelGrid_monthly_sensor", {})[entry_id] = monthly_sensor
+    hass.data.setdefault("enelgrid_monthly_sensor", {})[entry_id] = monthly_sensor
 
     async_add_entities([consumption_sensor, monthly_sensor])
 
@@ -118,7 +118,7 @@ class EnelGridConsumptionSensor(SensorEntity):
         return 0.0
 
     async def update_monthly_sensor(self, all_data_by_date, entry_id):
-        monthly_sensor = self.hass.data.get("enelGrid_monthly_sensor", {}).get(entry_id)
+        monthly_sensor = self.hass.data.get("enelgrid_monthly_sensor", {}).get(entry_id)
 
         if not monthly_sensor:
             _LOGGER.error(f"Monthly sensor is not available for entry {entry_id}!")
