@@ -1,4 +1,4 @@
-# Home Assistant - EnelGrid Integration
+# Home Assistant - enelgrid Integration
 
 This custom integration for Home Assistant retrieves and imports **hourly and daily energy consumption data** from **Enel Italia**, making it available in Home Assistant's **Energy Dashboard**.
 
@@ -21,14 +21,14 @@ This custom integration for Home Assistant retrieves and imports **hourly and da
 2. Restart Home Assistant.
 3. In Home Assistant, go to:  
    **Settings → Devices & Services → Add Integration**  
-   Search for **"EnelGrid"**.
+   Search for **"enelgrid"**.
 4. Enter your Enel login credentials and POD details.
 
 ### Installation via HACS (Recommended)
 
 1. In **HACS**, go to **Integrations**.
 2. Add this repository as a **Custom Repository** (if it's not already in HACS).
-3. Search for **"EnelGrid"** and install.
+3. Search for **"enelgrid"** and install.
 4. Restart Home Assistant.
 5. Follow the setup steps in **Settings → Devices & Services**.
 

@@ -5,7 +5,7 @@ from .const import DOMAIN
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Set up EnelGrid from a config entry."""
+    """Set up enelgrid from a config entry."""
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = entry.data
 
     # Forward the setup to the sensor platform

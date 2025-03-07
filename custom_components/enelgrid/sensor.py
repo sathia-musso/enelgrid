@@ -15,7 +15,7 @@ SCAN_INTERVAL = timedelta(days=1)  # Fetch once a day
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
-    """Set up EnelGrid sensors from a config entry."""
+    """Set up enelgrid sensors from a config entry."""
     pod = entry.data[CONF_POD]
     entry_id = entry.entry_id
 
@@ -26,7 +26,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
 
     async_add_entities([consumption_sensor, monthly_sensor])
 
-    _LOGGER.warning(f"EnelGrid sensors added: {consumption_sensor.entity_id}, {monthly_sensor.entity_id}")
+    _LOGGER.warning(f"enelgrid sensors added: {consumption_sensor.entity_id}, {monthly_sensor.entity_id}")
 
     # Immediately fetch data upon install
     hass.async_create_task(consumption_sensor.async_update())
@@ -39,7 +39,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
 
 
 class EnelGridConsumptionSensor(SensorEntity):
-    """Main sensor to fetch and import data from EnelGrid."""
+    """Main sensor to fetch and import data from enelgrid."""
 
     def __init__(self, hass, entry):
         self.hass = hass
@@ -48,7 +48,7 @@ class EnelGridConsumptionSensor(SensorEntity):
         self._password = entry.data[CONF_PASSWORD]
         self._pod = entry.data[CONF_POD]
         self._numero_utente = entry.data[CONF_USER_NUMBER]
-        self._attr_name = "EnelGrid Daily Import"
+        self._attr_name = "enelgrid Daily Import"
         self._state = None
         self.session = None
 
@@ -71,7 +71,7 @@ class EnelGridConsumptionSensor(SensorEntity):
                 _LOGGER.warning("No hourly data found.")
                 self._state = "No data"
         except Exception as err:
-            _LOGGER.exception(f"Failed to update EnelGrid data: {err}")
+            _LOGGER.exception(f"Failed to update enelgrid data: {err}")
             self._state = "Error"
         finally:
             if self.session:
@@ -84,7 +84,7 @@ class EnelGridConsumptionSensor(SensorEntity):
         metadata = {
             "has_mean": False,
             "has_sum": True,
-            "name": f"EnelGrid {pod} Consumption",
+            "name": f"Enel {pod} Consumption",
             "source": "sensor",
             "statistic_id": statistic_id,
             "unit_of_measurement": "kWh",
@@ -136,7 +136,7 @@ class EnelGridMonthlySensor(SensorEntity):
     def __init__(self, pod):
         object_id = f"enelgrid_{pod.lower().replace('-', '_').replace('.', '_')}_monthly_consumption"
         self.entity_id = f"sensor.{object_id}"
-        self._attr_name = f"EnelGrid {pod} Monthly Consumption"
+        self._attr_name = f"Enel {pod} Monthly Consumption"
         self._attr_device_class = "energy"
         self._attr_state_class = "total_increasing"
         self._attr_native_unit_of_measurement = "kWh"

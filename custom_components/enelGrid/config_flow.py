@@ -10,7 +10,7 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class EnelGridConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    """Handle a config flow for EnelGrid."""
+    """Handle a config flow for enelgrid."""
 
     VERSION = 1
 
@@ -21,7 +21,7 @@ class EnelGridConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             # Save all user-provided data to the config entry
             return self.async_create_entry(
-                title=f"EnelGrid ({user_input[CONF_POD]})",
+                title=f"enelgrid ({user_input[CONF_POD]})",
                 data=user_input
             )
 

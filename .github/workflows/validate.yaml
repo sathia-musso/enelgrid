@@ -1,4 +1,4 @@
-name: Validate EnelGrid
+name: Validate enelgrid
 
 on:
   push:
