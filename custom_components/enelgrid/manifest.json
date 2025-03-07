@@ -1,0 +1,13 @@
+{
+  "domain": "enelgrid",
+  "name": "Enel Grid Integration",
+  "version": "1.0.0",
+  "documentation": "https://github.com/sathia-musso/enelgrid",
+  "requirements": ["beautifulsoup4"],
+  "dependencies": [],
+  "codeowners": ["@sathia-musso"],
+  "config_flow": true,
+  "iot_class": "cloud_polling",
+  "loggers": ["custom_components.enelgrid"],
+  "issue_tracker": "https://github.com/sathia-musso/enelgrid/issues"
+}
