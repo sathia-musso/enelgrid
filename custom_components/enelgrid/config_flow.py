@@ -4,7 +4,7 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.core import callback
 
-from .const import DOMAIN, CONF_POD, CONF_USER_NUMBER, CONF_USERNAME, CONF_PASSWORD
+from .const import DOMAIN, CONF_POD, CONF_USER_NUMBER, CONF_USERNAME, CONF_PASSWORD, CONF_PRICE_PER_KWH
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -33,6 +33,8 @@ class EnelGridConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Required(CONF_PASSWORD): str,
                 vol.Required(CONF_POD): str,
                 vol.Required(CONF_USER_NUMBER): int,
+                vol.Required(CONF_PRICE_PER_KWH, default=0.33): vol.Coerce(float)  # ✅ Add price per kWh
+
             }),
             errors=errors,
         )

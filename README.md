@@ -40,8 +40,18 @@ During setup, you’ll need to provide:
 - **Password**.
 - **POD Number** (found on your Enel bill).
 - **User Number** (also found on your Enel bill).
+- **Price per Kwh** (take your bill cost and / by kwh to get a reasonable nu,ber).
 
 These credentials are stored securely in Home Assistant's `config_entries` storage.
+
+After this go to your Energy settings and configure the statistics like this:
+
+![Description of Image](assets/energy_config.jpg)
+
+if all goes well, you should see something like this:
+
+![Description of Image](assets/example.jpg)
+
 
 ## 🕒 Automatic Data Fetching
 
