@@ -40,7 +40,8 @@ During setup, you’ll need to provide:
 - **Password**.
 - **POD Number** (found on your Enel bill).
 - **User Number** (also found on your Enel bill).
-- **Price per Kwh** (take your bill cost and / by kwh to get a reasonable nu,ber).
+- **Price per Kwh** (Take your total electricity bill amount and divide it by the total kWh consumed (as shown on your bill) to get a reasonable estimate for the price per kWh.
+  ).
 
 These credentials are stored securely in Home Assistant's `config_entries` storage.
 

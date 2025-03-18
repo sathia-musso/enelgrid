@@ -1,7 +1,6 @@
 import logging
 from datetime import timedelta, datetime
 
-
 from homeassistant.components.recorder.statistics import async_add_external_statistics, get_last_statistics
 from homeassistant.components.recorder import get_instance
 from homeassistant.components.sensor import SensorEntity
@@ -27,7 +26,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
 
     hass.data.setdefault("enelgrid_monthly_sensor", {})[entry_id] = monthly_sensor
 
-    async_add_entities([consumption_sensor, monthly_sensor]) # cost_sensor
+    async_add_entities([consumption_sensor, monthly_sensor])  # cost_sensor
 
     _LOGGER.warning(f"enelgrid sensors added: {consumption_sensor.entity_id}, {monthly_sensor.entity_id}")
 
@@ -126,7 +125,8 @@ class EnelGridConsumptionSensor(SensorEntity):
             try:
                 async_add_external_statistics(self.hass, metadata_kw, stats_kw)
                 async_add_external_statistics(self.hass, metadata_cost, stats_cost)  # ✅ Push cost statistics
-                _LOGGER.info(f"Saved {len(stats_kw)} points for {statistic_id_kw} and {len(stats_cost)} for {statistic_id_cost}")
+                _LOGGER.info(
+                    f"Saved {len(stats_kw)} points for {statistic_id_kw} and {len(stats_cost)} for {statistic_id_cost}")
             except HomeAssistantError as e:
                 _LOGGER.exception(f"Failed to save statistics for {statistic_id_kw}: {e}")
                 raise
@@ -141,7 +141,6 @@ class EnelGridConsumptionSensor(SensorEntity):
             _LOGGER.critical(f"Last recorded cumulative sum for {statistic_id}: {last_stats[statistic_id][0]['sum']}")
             return last_stats[statistic_id][0]["sum"]  # Last recorded cumulative sum
         return 0.0
-
 
     async def update_monthly_sensor(self, all_data_by_date, entry_id):
         monthly_sensor = self.hass.data.get("enelgrid_monthly_sensor", {}).get(entry_id)
