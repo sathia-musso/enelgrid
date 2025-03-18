@@ -3,6 +3,7 @@ from datetime import timedelta, datetime
 
 
 from homeassistant.components.recorder.statistics import async_add_external_statistics, get_last_statistics
+from homeassistant.components.recorder import get_instance
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util.dt import as_utc
@@ -110,9 +111,7 @@ class EnelGridConsumptionSensor(SensorEntity):
             stats_kw = []
             stats_cost = []
 
-            cumulative_offset = await self.hass.async_add_executor_job(
-                self.get_last_cumulative_kwh, statistic_id_kw
-            )
+            cumulative_offset = await self.get_last_cumulative_kwh(statistic_id_kw)
 
             for point in data_points:
                 stats_kw.append({
@@ -132,12 +131,17 @@ class EnelGridConsumptionSensor(SensorEntity):
                 _LOGGER.exception(f"Failed to save statistics for {statistic_id_kw}: {e}")
                 raise
 
-    def get_last_cumulative_kwh(self, statistic_id):
+    async def get_last_cumulative_kwh(self, statistic_id: str):
         """Get the last recorded cumulative kWh for a given statistic_id."""
-        last_stats = get_last_statistics(self.hass, 1, statistic_id, True, {"sum"})
+        last_stats = await get_instance(self.hass).async_add_executor_job(
+            get_last_statistics, self.hass, 1, statistic_id, True, {"sum"}
+        )
+
         if last_stats and statistic_id in last_stats:
+            _LOGGER.critical(f"Last recorded cumulative sum for {statistic_id}: {last_stats[statistic_id][0]['sum']}")
             return last_stats[statistic_id][0]["sum"]  # Last recorded cumulative sum
         return 0.0
+
 
     async def update_monthly_sensor(self, all_data_by_date, entry_id):
         monthly_sensor = self.hass.data.get("enelgrid_monthly_sensor", {}).get(entry_id)
