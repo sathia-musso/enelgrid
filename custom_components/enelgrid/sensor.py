@@ -138,7 +138,7 @@ class EnelGridConsumptionSensor(SensorEntity):
         )
 
         if last_stats and statistic_id in last_stats:
-            _LOGGER.critical(f"Last recorded cumulative sum for {statistic_id}: {last_stats[statistic_id][0]['sum']}")
+            _LOGGER.info(f"Last recorded cumulative sum for {statistic_id}: {last_stats[statistic_id][0]['sum']}")
             return last_stats[statistic_id][0]["sum"]  # Last recorded cumulative sum
         return 0.0
 

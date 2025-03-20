@@ -36,12 +36,12 @@ This custom integration for Home Assistant retrieves and imports **hourly and da
 
 During setup, you’ll need to provide:
 
-- **Username** (your Enel account email).
-- **Password**.
-- **POD Number** (found on your Enel bill).
-- **User Number** (also found on your Enel bill).
-- **Price per Kwh** (Take your total electricity bill amount and divide it by the total kWh consumed (as shown on your bill) to get a reasonable estimate for the price per kWh.
-  ).
+- **Username** Your Enel account email
+- **Password**
+- **POD Number** Found on your Enel bill
+- **User Number** Also found on your Enel bill
+- **Price per Kwh** - Take your total electricity bill amount and divide it by the total kWh consumed (as shown on your bill) to get a reasonable estimate for the price per kWh
+
 
 These credentials are stored securely in Home Assistant's `config_entries` storage.
 
