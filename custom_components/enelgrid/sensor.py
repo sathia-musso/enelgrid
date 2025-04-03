@@ -4,12 +4,14 @@ from datetime import timedelta, datetime
 from homeassistant.components.recorder.statistics import async_add_external_statistics, get_last_statistics
 from homeassistant.components.recorder import get_instance
 from homeassistant.components.sensor import SensorEntity
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import HomeAssistantError, ConfigEntryAuthFailed
 from homeassistant.util.dt import as_utc
 from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.components.persistent_notification import async_create
+
 from sensor_state_data import SensorDeviceClass
 
-from .const import CONF_POD, CONF_USER_NUMBER, CONF_USERNAME, CONF_PASSWORD, CONF_PRICE_PER_KWH
+from .const import CONF_POD, CONF_USER_NUMBER, CONF_USERNAME, CONF_PASSWORD, CONF_PRICE_PER_KWH, DOMAIN
 from .login import EnelGridSession
 
 _LOGGER = logging.getLogger(__name__)
@@ -73,6 +75,20 @@ class EnelGridConsumptionSensor(SensorEntity):
             else:
                 _LOGGER.warning("No hourly data found.")
                 self._state = "No data"
+        except ConfigEntryAuthFailed as err:
+            self._state = "Login error"
+            async_create(
+                self.hass,
+                message=f"Login failed. Please check your credentials. {err}",
+                title="EnelGrid Login Error"
+            )
+
+            await self.hass.config_entries.flow.async_init(
+                DOMAIN,
+                context={"source": "reauth", "entry_id": self.entry_id},
+                data={}
+            )
+
         except Exception as err:
             _LOGGER.exception(f"Failed to update enelgrid data: {err}")
             self._state = "Error"

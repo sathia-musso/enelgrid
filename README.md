@@ -5,6 +5,7 @@ This custom integration for Home Assistant retrieves and imports **hourly and da
 ## 📋 Features
 
 - 📊 Automatic login using Enel's SAML authentication process.
+- 🔄 **Supports re-authentication** if the login process encounters issues.
 - 🕒 Fetches and tracks hourly energy consumption (data available up to three days prior due to Enel's limitations).
 - 📈 Tracks monthly cumulative consumption.
 - ✅ Seamless integration with Home Assistant Energy Dashboard.
@@ -42,7 +43,6 @@ During setup, you’ll need to provide:
 - **User Number** Also found on your Enel bill
 - **Price per Kwh** - Take your total electricity bill amount and divide it by the total kWh consumed (as shown on your bill) to get a reasonable estimate for the price per kWh
 
-
 These credentials are stored securely in Home Assistant's `config_entries` storage.
 
 After this go to your Energy settings and configure the statistics like this:
@@ -52,7 +52,6 @@ After this go to your Energy settings and configure the statistics like this:
 if all goes well, you should see something like this:
 
 ![Description of Image](assets/example.jpg)
-
 
 ## 🕒 Automatic Data Fetching
 
@@ -69,6 +68,7 @@ if all goes well, you should see something like this:
 | Energy Dashboard Integration       | ✅ |
 | Automatic Login                    | ✅ |
 | Automatic Daily Fetch              | ✅ |
+| Re-authentication Support          | ✅ |
 
 ## 🔗 Links
 

@@ -1,6 +1,7 @@
 import aiohttp
 from bs4 import BeautifulSoup
 import logging
+import homeassistant.exceptions as ha_exceptions
 from datetime import datetime, timedelta
 
 _LOGGER = logging.getLogger(__name__)
@@ -33,7 +34,8 @@ class EnelGridSession:
             input_tag = soup.find("input", {"name": "sessionDataKey"})
 
             if not input_tag:
-                raise Exception("sessionDataKey not found on login page")
+                _LOGGER.error("sessionDataKey not found on login page, probably Enel changed their login page structure.")
+                raise ha_exceptions.ConfigEntryAuthFailed("sessionDataKey not found on login page, probably Enel changed their login page structure.")
 
             session_data_key = input_tag.get("value")
             return session_data_key
@@ -65,7 +67,9 @@ class EnelGridSession:
             saml_response_input = soup.find("input", {"name": "SAMLResponse"})
 
             if not saml_response_input:
-                raise Exception("SAMLResponse not found after login")
+                _LOGGER.error("Login failed: SAMLResponse not found after login")
+                raise ha_exceptions.ConfigEntryAuthFailed("Enel login failed: invalid credentials or unexpected page structure.")
+                # raise Exception("SAMLResponse not found after login")
 
             return saml_response_input.get("value")
 

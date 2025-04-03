@@ -1,6 +1,7 @@
 import logging
-import voluptuous as vol
+from typing import Mapping, Any
 
+import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.core import callback
 
@@ -14,11 +15,21 @@ class EnelGridConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     VERSION = 1
 
-    async def async_step_user(self, user_input=None):
+    def __init__(self):
+        self.reauth_entry = None
+
+    async def async_step_user(
+            self, user_input: dict[str, Any] | None = None
+    ):
         """Handle the initial step where the user configures the integration."""
         errors = {}
+        defaults = self.reauth_entry.data if hasattr(self, "reauth_entry") else {}
 
         if user_input is not None:
+            pod = user_input[CONF_POD]
+            await self.async_set_unique_id(pod)
+            self._abort_if_unique_id_configured()
+
             # Save all user-provided data to the config entry
             return self.async_create_entry(
                 title=f"enelgrid ({user_input[CONF_POD]})",
@@ -29,15 +40,28 @@ class EnelGridConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="user",
             data_schema=vol.Schema({
-                vol.Required(CONF_USERNAME): str,
+                vol.Required(CONF_USERNAME, default=defaults.get(CONF_USERNAME, "")): str,
                 vol.Required(CONF_PASSWORD): str,
-                vol.Required(CONF_POD): str,
-                vol.Required(CONF_USER_NUMBER): int,
-                vol.Required(CONF_PRICE_PER_KWH, default=0.33): vol.Coerce(float)  # ✅ Add price per kWh
-
+                vol.Required(CONF_POD, default=defaults.get(CONF_POD, "")): str,
+                vol.Required(CONF_USER_NUMBER, default=defaults.get(CONF_USER_NUMBER, 0)): int,
+                vol.Required(CONF_PRICE_PER_KWH, default=defaults.get(CONF_PRICE_PER_KWH, 0.33)): vol.Coerce(float)
             }),
             errors=errors,
         )
+
+    async def async_step_reauth(
+            self, entry_data: Mapping[str, Any]
+    ):
+        """Perform reauth upon an API authentication error."""
+        entry_id = self.context.get("entry_id")
+        if not entry_id:
+            return self.async_abort(reason="missing_entry_id")
+
+        self.reauth_entry = self.hass.config_entries.async_get_entry(entry_id)
+        if self.reauth_entry is None:
+            return self.async_abort(reason="entry_not_found")
+
+        return await self.async_step_user()
 
 
 @callback
