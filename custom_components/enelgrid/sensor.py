@@ -1,17 +1,26 @@
 import logging
-from datetime import timedelta, datetime
+from datetime import datetime, timedelta
 
-from homeassistant.components.recorder.statistics import async_add_external_statistics, get_last_statistics
-from homeassistant.components.recorder import get_instance
-from homeassistant.components.sensor import SensorEntity
-from homeassistant.exceptions import HomeAssistantError, ConfigEntryAuthFailed
-from homeassistant.util.dt import as_utc
-from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.components.persistent_notification import async_create
+from homeassistant.components.recorder import get_instance
+from homeassistant.components.recorder.statistics import (
+    async_add_external_statistics,
+    get_last_statistics,
+)
+from homeassistant.components.sensor import SensorEntity
+from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
+from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.util.dt import as_utc
+from homeassistant.components.sensor import SensorDeviceClass
 
-from sensor_state_data import SensorDeviceClass
-
-from .const import CONF_POD, CONF_USER_NUMBER, CONF_USERNAME, CONF_PASSWORD, CONF_PRICE_PER_KWH, DOMAIN
+from .const import (
+    CONF_PASSWORD,
+    CONF_POD,
+    CONF_PRICE_PER_KWH,
+    CONF_USER_NUMBER,
+    CONF_USERNAME,
+    DOMAIN,
+)
 from .login import EnelGridSession
 
 _LOGGER = logging.getLogger(__name__)
@@ -30,7 +39,9 @@ async def async_setup_entry(hass, entry, async_add_entities):
 
     async_add_entities([consumption_sensor, monthly_sensor])  # cost_sensor
 
-    _LOGGER.warning(f"enelgrid sensors added: {consumption_sensor.entity_id}, {monthly_sensor.entity_id}")
+    _LOGGER.warning(
+        f"enelgrid sensors added: {consumption_sensor.entity_id}, {monthly_sensor.entity_id}"
+    )
 
     # Immediately fetch data upon install
     hass.async_create_task(consumption_sensor.async_update())
@@ -63,13 +74,17 @@ class EnelGridConsumptionSensor(SensorEntity):
 
     async def async_update(self):
         try:
-            self.session = EnelGridSession(self._username, self._password, self._pod, self._numero_utente)
+            self.session = EnelGridSession(
+                self._username, self._password, self._pod, self._numero_utente
+            )
 
             data = await self.session.fetch_consumption_data()
             data_points = parse_enel_hourly_data(data)
 
             if data_points:
-                await self.save_to_home_assistant(data_points, self._pod, self.entry_id, self._price_per_kwh)
+                await self.save_to_home_assistant(
+                    data_points, self._pod, self.entry_id, self._price_per_kwh
+                )
                 await self.update_monthly_sensor(data_points, self.entry_id)
                 self._state = "Imported"
             else:
@@ -80,13 +95,11 @@ class EnelGridConsumptionSensor(SensorEntity):
             async_create(
                 self.hass,
                 message=f"Login failed. Please check your credentials. {err}",
-                title="EnelGrid Login Error"
+                title="EnelGrid Login Error",
             )
 
             await self.hass.config_entries.flow.async_init(
-                DOMAIN,
-                context={"source": "reauth", "entry_id": self.entry_id},
-                data={}
+                DOMAIN, context={"source": "reauth", "entry_id": self.entry_id}, data={}
             )
 
         except Exception as err:
@@ -96,12 +109,18 @@ class EnelGridConsumptionSensor(SensorEntity):
             if self.session:
                 await self.session.close()
 
-    async def save_to_home_assistant(self, all_data_by_date, pod, entry_id, price_per_kwh):
+    async def save_to_home_assistant(
+        self, all_data_by_date, pod, entry_id, price_per_kwh
+    ):
 
-        object_id_kw = f"enelgrid_{pod.lower().replace('-', '_').replace('.', '_')}_consumption"
+        object_id_kw = (
+            f"enelgrid_{pod.lower().replace('-', '_').replace('.', '_')}_consumption"
+        )
         statistic_id_kw = f"sensor:{object_id_kw}"
 
-        object_id_cost = f"enelgrid_{pod.lower().replace('-', '_').replace('.', '_')}_kw_cost"
+        object_id_cost = (
+            f"enelgrid_{pod.lower().replace('-', '_').replace('.', '_')}_kw_cost"
+        )
         statistic_id_cost = f"sensor:{object_id_cost}"
 
         metadata_kw = {
@@ -129,22 +148,31 @@ class EnelGridConsumptionSensor(SensorEntity):
             cumulative_offset = await self.get_last_cumulative_kwh(statistic_id_kw)
 
             for point in data_points:
-                stats_kw.append({
-                    "start": as_utc(point["timestamp"]),
-                    "sum": point["cumulative_kwh"] + cumulative_offset
-                })
-                stats_cost.append({
-                    "start": as_utc(point["timestamp"]),
-                    "sum": point["cumulative_kwh"] * price_per_kwh
-                })
+                stats_kw.append(
+                    {
+                        "start": as_utc(point["timestamp"]),
+                        "sum": point["cumulative_kwh"] + cumulative_offset,
+                    }
+                )
+                stats_cost.append(
+                    {
+                        "start": as_utc(point["timestamp"]),
+                        "sum": point["cumulative_kwh"] * price_per_kwh,
+                    }
+                )
 
             try:
                 async_add_external_statistics(self.hass, metadata_kw, stats_kw)
-                async_add_external_statistics(self.hass, metadata_cost, stats_cost)  # ✅ Push cost statistics
+                async_add_external_statistics(
+                    self.hass, metadata_cost, stats_cost
+                )  # ✅ Push cost statistics
                 _LOGGER.info(
-                    f"Saved {len(stats_kw)} points for {statistic_id_kw} and {len(stats_cost)} for {statistic_id_cost}")
+                    f"Saved {len(stats_kw)} points for {statistic_id_kw} and {len(stats_cost)} for {statistic_id_cost}"
+                )
             except HomeAssistantError as e:
-                _LOGGER.exception(f"Failed to save statistics for {statistic_id_kw}: {e}")
+                _LOGGER.exception(
+                    f"Failed to save statistics for {statistic_id_kw}: {e}"
+                )
                 raise
 
     async def get_last_cumulative_kwh(self, statistic_id: str):
@@ -154,7 +182,9 @@ class EnelGridConsumptionSensor(SensorEntity):
         )
 
         if last_stats and statistic_id in last_stats:
-            _LOGGER.info(f"Last recorded cumulative sum for {statistic_id}: {last_stats[statistic_id][0]['sum']}")
+            _LOGGER.info(
+                f"Last recorded cumulative sum for {statistic_id}: {last_stats[statistic_id][0]['sum']}"
+            )
             return last_stats[statistic_id][0]["sum"]  # Last recorded cumulative sum
         return 0.0
 
@@ -165,7 +195,9 @@ class EnelGridConsumptionSensor(SensorEntity):
             _LOGGER.error(f"Monthly sensor is not available for entry {entry_id}!")
             return
 
-        total_kwh = sum(points[-1]["cumulative_kwh"] for points in all_data_by_date.values())
+        total_kwh = sum(
+            points[-1]["cumulative_kwh"] for points in all_data_by_date.values()
+        )
 
         monthly_sensor.set_total(total_kwh)
         _LOGGER.info(f"Updated monthly sensor to {total_kwh} kWh")
@@ -195,11 +227,13 @@ class EnelGridMonthlySensor(SensorEntity):
 
 def parse_enel_hourly_data(data):
     """Extract all hourly data into per-day structure, preserving cross-day cumulative values."""
-    aggregations = data.get("data", {}).get("aggregationResult", {}).get("aggregations", [])
+    aggregations = (
+        data.get("data", {}).get("aggregationResult", {}).get("aggregations", [])
+    )
 
     hourly_aggregation = next(
         (agg for agg in aggregations if agg.get("referenceID") == "hourlyConsumption"),
-        None
+        None,
     )
 
     if not hourly_aggregation:
@@ -210,7 +244,7 @@ def parse_enel_hourly_data(data):
 
     sorted_results = sorted(
         hourly_aggregation.get("results", []),
-        key=lambda r: datetime.strptime(r["date"], "%d%m%Y")
+        key=lambda r: datetime.strptime(r["date"], "%d%m%Y"),
     )
 
     for day_result in sorted_results:
@@ -222,14 +256,18 @@ def parse_enel_hourly_data(data):
 
         for hour_entry in day_result.get("binValues", []):
             hour_number = int(hour_entry["name"][1:])
-            hour_time = datetime.combine(day_date, datetime.min.time()) + timedelta(hours=hour_number - 1)
+            hour_time = datetime.combine(day_date, datetime.min.time()) + timedelta(
+                hours=hour_number - 1
+            )
 
             running_total += hour_entry["value"]
-            hourly_points.append({
-                "timestamp": hour_time,
-                "kwh": hour_entry["value"],
-                "cumulative_kwh": running_total
-            })
+            hourly_points.append(
+                {
+                    "timestamp": hour_time,
+                    "kwh": hour_entry["value"],
+                    "cumulative_kwh": running_total,
+                }
+            )
 
         all_data_by_date[day_date] = hourly_points
 

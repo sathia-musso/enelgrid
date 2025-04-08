@@ -1,15 +1,18 @@
-import aiohttp
-from bs4 import BeautifulSoup
 import logging
-import homeassistant.exceptions as ha_exceptions
 from datetime import datetime, timedelta
+
+import aiohttp
+import homeassistant.exceptions as ha_exceptions
+from bs4 import BeautifulSoup
 
 _LOGGER = logging.getLogger(__name__)
 
 LOGIN_PAGE_URL = "https://www.enel.it/it/login"
 LOGIN_URL = "https://accounts.enel.com/samlsso"
 SAMLAUTH_URL = "https://www.enel.it/bin/samlauth"
-AGGREGATE_CONSUMPTION_URL = "https://www.enel.it/bin/areaclienti/auth/aggregateConsumption"
+AGGREGATE_CONSUMPTION_URL = (
+    "https://www.enel.it/bin/areaclienti/auth/aggregateConsumption"
+)
 
 
 class EnelGridSession:
@@ -20,7 +23,7 @@ class EnelGridSession:
         self.password = password
         self.pod = pod
         self.user_number = user_number
-        self.session = aiohttp.ClientSession()
+        self.session = None
 
     async def close(self):
         await self.session.close()
@@ -30,18 +33,23 @@ class EnelGridSession:
         async with self.session.get(LOGIN_PAGE_URL) as response:
             response.raise_for_status()
             html = await response.text()
-            soup = BeautifulSoup(html, 'html.parser')
+            soup = BeautifulSoup(html, "html.parser")
             input_tag = soup.find("input", {"name": "sessionDataKey"})
 
             if not input_tag:
-                _LOGGER.error("sessionDataKey not found on login page, probably Enel changed their login page structure.")
-                raise ha_exceptions.ConfigEntryAuthFailed("sessionDataKey not found on login page, probably Enel changed their login page structure.")
+                _LOGGER.error(
+                    "sessionDataKey not found on login page, probably Enel changed their login page structure."
+                )
+                raise ha_exceptions.ConfigEntryAuthFailed(
+                    "sessionDataKey not found on login page, probably Enel changed their login page structure."
+                )
 
             session_data_key = input_tag.get("value")
             return session_data_key
 
     async def login(self):
         """Complete login process including SAMLResponse submission."""
+        self.session = aiohttp.ClientSession()
         session_data_key = await self.get_session_data_key()
         saml_response = await self.submit_login_form(session_data_key)
         await self.submit_saml_response(saml_response)
@@ -53,22 +61,24 @@ class EnelGridSession:
             "username": self.username,
             "password": self.password,
             "sessionDataKey": session_data_key,
-            "tocommonauth": "true"
+            "tocommonauth": "true",
         }
 
-        headers = {
-            "Content-Type": "application/x-www-form-urlencoded"
-        }
+        headers = {"Content-Type": "application/x-www-form-urlencoded"}
 
-        async with self.session.post(LOGIN_URL, data=payload, headers=headers) as response:
+        async with self.session.post(
+            LOGIN_URL, data=payload, headers=headers
+        ) as response:
             response.raise_for_status()
             html = await response.text()
-            soup = BeautifulSoup(html, 'html.parser')
+            soup = BeautifulSoup(html, "html.parser")
             saml_response_input = soup.find("input", {"name": "SAMLResponse"})
 
             if not saml_response_input:
                 _LOGGER.error("Login failed: SAMLResponse not found after login")
-                raise ha_exceptions.ConfigEntryAuthFailed("Enel login failed: invalid credentials or unexpected page structure.")
+                raise ha_exceptions.ConfigEntryAuthFailed(
+                    "Enel login failed: invalid credentials or unexpected page structure."
+                )
                 # raise Exception("SAMLResponse not found after login")
 
             return saml_response_input.get("value")
@@ -78,7 +88,9 @@ class EnelGridSession:
         payload = {"SAMLResponse": saml_response}
         headers = {"Content-Type": "application/x-www-form-urlencoded"}
 
-        async with self.session.post(SAMLAUTH_URL, data=payload, headers=headers) as response:
+        async with self.session.post(
+            SAMLAUTH_URL, data=payload, headers=headers
+        ) as response:
             response.raise_for_status()
 
         _LOGGER.info("Session cookies enriched after SAMLResponse submission.")
