@@ -6,7 +6,7 @@ This custom integration for Home Assistant retrieves and imports **hourly and da
 
 - 📊 Automatic login using Enel's SAML authentication process.
 - 🔄 **Supports re-authentication** if the login process encounters issues.
-- 🕒 Fetches and tracks hourly energy consumption (data available up to three days prior due to Enel's limitations).
+- 🕒 Fetches and tracks hourly energy consumption (Enel provides data with a three-day delay).
 - 📈 Tracks monthly cumulative consumption.
 - ✅ Seamless integration with Home Assistant Energy Dashboard.
 - 🔁 Automatically updates data daily.
