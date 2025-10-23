@@ -141,33 +141,73 @@ class EnelGridConsumptionSensor(SensorEntity):
             "unit_of_measurement": "EUR",
         }
 
+        # Get last saved timestamp and cumulative value to avoid re-saving old data
+        last_timestamp, cumulative_offset = await self.get_last_statistic(statistic_id_kw)
+
+        # Filter out days that are already in the database
+        # Only save new data (days after the last saved timestamp)
+        new_data_by_date = {}
         for day_date, data_points in all_data_by_date.items():
+            # Check if this day has any data points newer than what's in DB
+            day_has_new_data = False
+            if last_timestamp is None:
+                # DB is empty, save everything
+                day_has_new_data = True
+            else:
+                # Check if any point in this day is newer than last saved
+                for point in data_points:
+                    if point["timestamp"] > last_timestamp:
+                        day_has_new_data = True
+                        break
+
+            if day_has_new_data:
+                new_data_by_date[day_date] = data_points
+
+        if not new_data_by_date:
+            _LOGGER.warning(f"No new data to save for {statistic_id_kw} (last saved: {last_timestamp})")
+            return
+
+        _LOGGER.warning(
+            f"Saving {len(new_data_by_date)} new days for {statistic_id_kw} "
+            f"(last saved: {last_timestamp}, offset: {cumulative_offset} kWh)"
+        )
+
+        for day_date, data_points in new_data_by_date.items():
             stats_kw = []
             stats_cost = []
 
-            cumulative_offset = await self.get_last_cumulative_kwh(statistic_id_kw)
-
             for point in data_points:
+                # Skip points that are already in the database
+                if last_timestamp and point["timestamp"] <= last_timestamp:
+                    continue
+
+                # Calculate absolute cumulative value (relative to meter start)
+                absolute_cumulative = point["cumulative_kwh"] + cumulative_offset
+
                 stats_kw.append(
                     {
                         "start": as_utc(point["timestamp"]),
-                        "sum": point["cumulative_kwh"] + cumulative_offset,
+                        "sum": absolute_cumulative,
                     }
                 )
                 stats_cost.append(
                     {
                         "start": as_utc(point["timestamp"]),
-                        "sum": point["cumulative_kwh"] * price_per_kwh,
+                        "sum": absolute_cumulative * price_per_kwh,
                     }
                 )
+
+            if not stats_kw:
+                continue
 
             try:
                 async_add_external_statistics(self.hass, metadata_kw, stats_kw)
                 async_add_external_statistics(
                     self.hass, metadata_cost, stats_cost
-                )  # ✅ Push cost statistics
-                _LOGGER.info(
-                    f"Saved {len(stats_kw)} points for {statistic_id_kw} and {len(stats_cost)} for {statistic_id_cost}"
+                )
+                _LOGGER.warning(
+                    f"Saved {len(stats_kw)} new points for {day_date} "
+                    f"({statistic_id_kw}: {len(stats_kw)}, {statistic_id_cost}: {len(stats_cost)})"
                 )
             except HomeAssistantError as e:
                 _LOGGER.exception(
@@ -175,18 +215,37 @@ class EnelGridConsumptionSensor(SensorEntity):
                 )
                 raise
 
-    async def get_last_cumulative_kwh(self, statistic_id: str):
-        """Get the last recorded cumulative kWh for a given statistic_id."""
+    async def get_last_statistic(self, statistic_id: str):
+        """Get the last recorded timestamp and cumulative kWh for a given statistic_id.
+
+        Returns:
+            tuple: (last_timestamp, last_cumulative_kwh)
+                   - last_timestamp: datetime of last saved record, or None if DB is empty
+                   - last_cumulative_kwh: last cumulative value, or 0.0 if DB is empty
+        """
         last_stats = await get_instance(self.hass).async_add_executor_job(
             get_last_statistics, self.hass, 1, statistic_id, True, {"sum"}
         )
 
         if last_stats and statistic_id in last_stats:
-            _LOGGER.info(
-                f"Last recorded cumulative sum for {statistic_id}: {last_stats[statistic_id][0]['sum']}"
+            last_record = last_stats[statistic_id][0]
+            last_timestamp = datetime.fromtimestamp(last_record["start"])
+            last_sum = last_record["sum"]
+            _LOGGER.warning(
+                f"Last recorded for {statistic_id}: {last_timestamp} → {last_sum} kWh"
             )
-            return last_stats[statistic_id][0]["sum"]  # Last recorded cumulative sum
-        return 0.0
+            return (last_timestamp, last_sum)
+
+        _LOGGER.warning(f"No previous data found for {statistic_id}, starting fresh")
+        return (None, 0.0)
+
+    async def get_last_cumulative_kwh(self, statistic_id: str):
+        """Get the last recorded cumulative kWh for a given statistic_id.
+
+        This method is kept for backwards compatibility but now uses get_last_statistic.
+        """
+        _, cumulative = await self.get_last_statistic(statistic_id)
+        return cumulative
 
     async def update_monthly_sensor(self, all_data_by_date, entry_id):
         monthly_sensor = self.hass.data.get("enelgrid_monthly_sensor", {}).get(entry_id)
@@ -200,7 +259,7 @@ class EnelGridConsumptionSensor(SensorEntity):
         )
 
         monthly_sensor.set_total(total_kwh)
-        _LOGGER.info(f"Updated monthly sensor to {total_kwh} kWh")
+        _LOGGER.warning(f"Updated monthly sensor to {total_kwh} kWh")
 
 
 class EnelGridMonthlySensor(SensorEntity):
