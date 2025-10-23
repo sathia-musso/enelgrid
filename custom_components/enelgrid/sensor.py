@@ -27,9 +27,42 @@ _LOGGER = logging.getLogger(__name__)
 SCAN_INTERVAL = timedelta(days=1)  # Fetch once a day
 
 
+def _get_config_value(entry_data: dict, key: str, legacy_keys: list = None):
+    """Get config value handling both new and legacy key formats.
+
+    Args:
+        entry_data: The entry.data dictionary
+        key: The new/standard key name
+        legacy_keys: List of old key names to try if new key not found
+
+    Returns:
+        The value if found, raises KeyError if not found
+    """
+    # Try new key first
+    if key in entry_data:
+        return entry_data[key]
+
+    # Try legacy keys
+    if legacy_keys:
+        for legacy_key in legacy_keys:
+            # Exact match
+            if legacy_key in entry_data:
+                return entry_data[legacy_key]
+            # Partial match for keys like "pod: IT1234567890"
+            for entry_key in entry_data.keys():
+                if entry_key.startswith(legacy_key):
+                    return entry_data[entry_key]
+
+    # Not found - raise KeyError with helpful message
+    raise KeyError(
+        f"Config key '{key}' not found. Tried legacy keys: {legacy_keys}. "
+        f"Available keys: {list(entry_data.keys())}"
+    )
+
+
 async def async_setup_entry(hass, entry, async_add_entities):
     """Set up enelgrid sensors from a config entry."""
-    pod = entry.data[CONF_POD]
+    pod = _get_config_value(entry.data, CONF_POD, ["pod:", "pod: "])
     entry_id = entry.entry_id
 
     consumption_sensor = EnelGridConsumptionSensor(hass, entry)
@@ -59,11 +92,11 @@ class EnelGridConsumptionSensor(SensorEntity):
     def __init__(self, hass, entry):
         self.hass = hass
         self.entry_id = entry.entry_id
-        self._username = entry.data[CONF_USERNAME]
-        self._password = entry.data[CONF_PASSWORD]
-        self._pod = entry.data[CONF_POD]
-        self._numero_utente = entry.data[CONF_USER_NUMBER]
-        self._price_per_kwh = entry.data[CONF_PRICE_PER_KWH]
+        self._username = entry.data.get(CONF_USERNAME, entry.data.get("username"))
+        self._password = entry.data.get(CONF_PASSWORD, entry.data.get("password"))
+        self._pod = _get_config_value(entry.data, CONF_POD, ["pod:", "pod: "])
+        self._numero_utente = _get_config_value(entry.data, CONF_USER_NUMBER, ["numero utente", "numero_utente"])
+        self._price_per_kwh = entry.data.get(CONF_PRICE_PER_KWH, 0.33)
         self._attr_name = "enelgrid Daily Import"
         self._state = None
         self.session = None
@@ -164,10 +197,10 @@ class EnelGridConsumptionSensor(SensorEntity):
                 new_data_by_date[day_date] = data_points
 
         if not new_data_by_date:
-            _LOGGER.warning(f"No new data to save for {statistic_id_kw} (last saved: {last_timestamp})")
+            _LOGGER.info(f"No new data to save for {statistic_id_kw} (last saved: {last_timestamp})")
             return
 
-        _LOGGER.warning(
+        _LOGGER.info(
             f"Saving {len(new_data_by_date)} new days for {statistic_id_kw} "
             f"(last saved: {last_timestamp}, offset: {cumulative_offset} kWh)"
         )
@@ -205,7 +238,7 @@ class EnelGridConsumptionSensor(SensorEntity):
                 async_add_external_statistics(
                     self.hass, metadata_cost, stats_cost
                 )
-                _LOGGER.warning(
+                _LOGGER.info(
                     f"Saved {len(stats_kw)} new points for {day_date} "
                     f"({statistic_id_kw}: {len(stats_kw)}, {statistic_id_cost}: {len(stats_cost)})"
                 )
@@ -231,12 +264,12 @@ class EnelGridConsumptionSensor(SensorEntity):
             last_record = last_stats[statistic_id][0]
             last_timestamp = datetime.fromtimestamp(last_record["start"])
             last_sum = last_record["sum"]
-            _LOGGER.warning(
+            _LOGGER.info(
                 f"Last recorded for {statistic_id}: {last_timestamp} → {last_sum} kWh"
             )
             return (last_timestamp, last_sum)
 
-        _LOGGER.warning(f"No previous data found for {statistic_id}, starting fresh")
+        _LOGGER.info(f"No previous data found for {statistic_id}, starting fresh")
         return (None, 0.0)
 
     async def get_last_cumulative_kwh(self, statistic_id: str):
@@ -259,7 +292,7 @@ class EnelGridConsumptionSensor(SensorEntity):
         )
 
         monthly_sensor.set_total(total_kwh)
-        _LOGGER.warning(f"Updated monthly sensor to {total_kwh} kWh")
+        _LOGGER.info(f"Updated monthly sensor to {total_kwh} kWh")
 
 
 class EnelGridMonthlySensor(SensorEntity):

@@ -34,9 +34,43 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return True
 
 
+def _get_config_value(entry_data: dict, key: str, legacy_keys: list = None):
+    """Get config value handling both new and legacy key formats.
+
+    Args:
+        entry_data: The entry.data dictionary
+        key: The new/standard key name
+        legacy_keys: List of old key names to try if new key not found
+
+    Returns:
+        The value if found, None otherwise
+    """
+    # Try new key first
+    if key in entry_data:
+        return entry_data[key]
+
+    # Try legacy keys
+    if legacy_keys:
+        for legacy_key in legacy_keys:
+            # Exact match
+            if legacy_key in entry_data:
+                return entry_data[legacy_key]
+            # Partial match for keys like "pod: IT1234567890"
+            for entry_key in entry_data.keys():
+                if entry_key.startswith(legacy_key):
+                    return entry_data[entry_key]
+
+    return None
+
+
 async def _migrate_statistics_v1_to_v2(hass: HomeAssistant, entry: ConfigEntry):
     """Fix historical statistics by removing anomalous month-boundary jumps."""
-    pod = entry.data[CONF_POD]
+    # Handle both new and legacy config key formats
+    pod = _get_config_value(entry.data, CONF_POD, ["pod:", "pod: "])
+    if not pod:
+        _LOGGER.error("Cannot find POD in config entry data. Available keys: %s", list(entry.data.keys()))
+        return False
+
     price_per_kwh = entry.data.get(CONF_PRICE_PER_KWH, 0.33)
 
     object_id_kw = f"enelgrid_{pod.lower().replace('-', '_').replace('.', '_')}_consumption"
