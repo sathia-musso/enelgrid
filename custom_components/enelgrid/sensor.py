@@ -27,42 +27,205 @@ _LOGGER = logging.getLogger(__name__)
 SCAN_INTERVAL = timedelta(days=1)  # Fetch once a day
 
 
-def _get_config_value(entry_data: dict, key: str, legacy_keys: list = None):
-    """Get config value handling both new and legacy key formats.
+async def historical_fetch_task(hass, entry, sensor):
+    """Background task to fetch all historical data month by month.
 
-    Args:
-        entry_data: The entry.data dictionary
-        key: The new/standard key name
-        legacy_keys: List of old key names to try if new key not found
-
-    Returns:
-        The value if found, raises KeyError if not found
+    Starts from current month and goes backwards until API returns no data.
     """
-    # Try new key first
-    if key in entry_data:
-        return entry_data[key]
+    _LOGGER.warning("[EnelGrid Historical] Starting full historical fetch...")
 
-    # Try legacy keys
-    if legacy_keys:
-        for legacy_key in legacy_keys:
-            # Exact match
-            if legacy_key in entry_data:
-                return entry_data[legacy_key]
-            # Partial match for keys like "pod: IT1234567890"
-            for entry_key in entry_data.keys():
-                if entry_key.startswith(legacy_key):
-                    return entry_data[entry_key]
+    pod = entry.data[CONF_POD]
+    username = entry.data[CONF_USERNAME]
+    password = entry.data[CONF_PASSWORD]
+    numero_utente = entry.data[CONF_USER_NUMBER]
+    price_per_kwh = entry.data[CONF_PRICE_PER_KWH]
 
-    # Not found - raise KeyError with helpful message
-    raise KeyError(
-        f"Config key '{key}' not found. Tried legacy keys: {legacy_keys}. "
-        f"Available keys: {list(entry_data.keys())}"
+    # Check if we need to clear old statistics first (from migration)
+    if entry.data.get("clear_statistics_needed", False):
+        _LOGGER.warning("[EnelGrid Historical] Clearing old statistics as requested by migration...")
+
+        pod_normalized = pod.lower().replace('-', '_').replace('.', '_')
+        statistic_id_consumption = f"sensor:enelgrid_{pod_normalized}_consumption"
+        statistic_id_cost = f"sensor:enelgrid_{pod_normalized}_kw_cost"
+
+        try:
+            from homeassistant.components.recorder.statistics import clear_statistics
+            recorder_instance = get_instance(hass)
+
+            # Clear consumption statistics
+            await recorder_instance.async_add_executor_job(
+                clear_statistics,
+                recorder_instance,
+                [statistic_id_consumption]
+            )
+            _LOGGER.warning(f"[EnelGrid Historical] Cleared consumption statistics: {statistic_id_consumption}")
+
+            # Clear cost statistics
+            await recorder_instance.async_add_executor_job(
+                clear_statistics,
+                recorder_instance,
+                [statistic_id_cost]
+            )
+            _LOGGER.warning(f"[EnelGrid Historical] Cleared cost statistics: {statistic_id_cost}")
+
+            # Clear the flag
+            new_data = dict(entry.data)
+            new_data["clear_statistics_needed"] = False
+            hass.config_entries.async_update_entry(entry, data=new_data)
+
+        except Exception as e:
+            _LOGGER.error(f"[EnelGrid Historical] Failed to clear statistics: {e}", exc_info=True)
+            # Continue anyway - better to have duplicate data than no data
+
+    current_date = datetime.now()
+    months_fetched = 0
+    total_days = 0
+
+    # Collect all months data first (from newest to oldest)
+    all_months_data = []
+
+    while True:
+        try:
+            # Calculate month range
+            first_day = current_date.replace(day=1)
+
+            # Last day of month
+            if current_date.month == 12:
+                last_day_of_month = current_date.replace(day=31)
+            else:
+                last_day_of_month = (current_date.replace(month=current_date.month + 1, day=1) - timedelta(days=1))
+
+            # For current month, use today instead of last day of month
+            # (Enel API returns future data which is wrong)
+            today = datetime.now()
+            if current_date.year == today.year and current_date.month == today.month:
+                last_day = today
+            else:
+                last_day = last_day_of_month
+
+            validity_from = first_day.strftime("%d%m%Y")
+            validity_to = last_day.strftime("%d%m%Y")
+
+            _LOGGER.warning(
+                f"[EnelGrid Historical] Fetching month {current_date.strftime('%Y-%m')} "
+                f"({validity_from} → {validity_to})..."
+            )
+
+            # Fetch data for this month
+            session = EnelGridSession(username, password, pod, numero_utente)
+            data = await session.fetch_consumption_data(validity_from, validity_to)
+            data_points = parse_enel_hourly_data(data)
+
+            # Save parsed data_points for debugging
+            try:
+                import os
+                import json
+                debug_dir = "/config/enelgrid_debug"
+                os.makedirs(debug_dir, exist_ok=True)
+                filename = f"parsed_{validity_from}_{validity_to}.json"
+                # Convert data_points to JSON-serializable format
+                serializable = {}
+                for date_key, points in data_points.items():
+                    serializable[str(date_key)] = [
+                        {
+                            "timestamp": p["timestamp"].isoformat(),
+                            "kwh": p["kwh"],
+                            "cumulative_kwh": p["cumulative_kwh"]
+                        }
+                        for p in points
+                    ]
+                with open(os.path.join(debug_dir, filename), "w") as f:
+                    json.dump(serializable, f, indent=2)
+                _LOGGER.warning(f"[EnelGrid Debug] Saved parsed data to {filename}")
+            except Exception as e:
+                _LOGGER.warning(f"[EnelGrid Debug] Failed to save parsed data: {e}")
+
+            if not data_points or len(data_points) == 0:
+                _LOGGER.warning(
+                    f"[EnelGrid Historical] No data returned for {current_date.strftime('%Y-%m')}, "
+                    "reached the limit of available historical data"
+                )
+                break
+
+            # Store this month's data
+            all_months_data.append({
+                "month": current_date.strftime("%Y-%m"),
+                "data_points": data_points
+            })
+
+            months_fetched += 1
+            total_days += len(data_points)
+
+            _LOGGER.warning(
+                f"[EnelGrid Historical] Month {current_date.strftime('%Y-%m')}: "
+                f"{len(data_points)} days fetched"
+            )
+
+            # Move to previous month
+            current_date = (current_date.replace(day=1) - timedelta(days=1))
+
+        except Exception as e:
+            _LOGGER.error(
+                f"[EnelGrid Historical] Error fetching month {current_date.strftime('%Y-%m')}: {e}",
+                exc_info=True
+            )
+            _LOGGER.warning("[EnelGrid Historical] Stopping fetch due to error")
+            break
+
+    # Now save all data in chronological order (oldest first)
+    _LOGGER.warning(
+        f"[EnelGrid Historical] Finished fetching. Got {months_fetched} months, "
+        f"{total_days} days total. Now saving in chronological order..."
+    )
+
+    all_months_data.reverse()  # Oldest first
+
+    # Read offset ONCE at the beginning to avoid race conditions
+    # (async_add_external_statistics doesn't immediately update DB)
+    object_id_kw = f"enelgrid_{pod.lower().replace('-', '_').replace('.', '_')}_consumption"
+    statistic_id_kw = f"sensor:{object_id_kw}"
+    cumulative_offset = await sensor.get_last_cumulative_kwh(statistic_id_kw)
+    _LOGGER.warning(f"[EnelGrid Historical] Starting with cumulative offset: {cumulative_offset:.2f} kWh")
+
+    for month_data in all_months_data:
+        try:
+            _LOGGER.warning(
+                f"[EnelGrid Historical] Saving month {month_data['month']} "
+                f"({len(month_data['data_points'])} days) with offset {cumulative_offset:.2f} kWh..."
+            )
+            # Pass offset and get updated offset after saving
+            cumulative_offset = await sensor.save_to_home_assistant(
+                month_data["data_points"],
+                pod,
+                entry.entry_id,
+                price_per_kwh,
+                cumulative_offset=cumulative_offset
+            )
+            _LOGGER.warning(
+                f"[EnelGrid Historical] Month {month_data['month']} saved. "
+                f"New offset: {cumulative_offset:.2f} kWh"
+            )
+        except Exception as e:
+            _LOGGER.error(
+                f"[EnelGrid Historical] Error saving month {month_data['month']}: {e}",
+                exc_info=True
+            )
+
+    # Mark as completed
+    new_data = dict(entry.data)
+    new_data["historical_fetch_needed"] = False
+    new_data["historical_fetch_completed"] = True
+    hass.config_entries.async_update_entry(entry, data=new_data)
+
+    _LOGGER.warning(
+        f"[EnelGrid Historical] ✅ Historical fetch completed! "
+        f"Total: {months_fetched} months, {total_days} days"
     )
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
     """Set up enelgrid sensors from a config entry."""
-    pod = _get_config_value(entry.data, CONF_POD, ["pod:", "pod: "])
+    pod = entry.data[CONF_POD]
     entry_id = entry.entry_id
 
     consumption_sensor = EnelGridConsumptionSensor(hass, entry)
@@ -76,8 +239,15 @@ async def async_setup_entry(hass, entry, async_add_entities):
         f"enelgrid sensors added: {consumption_sensor.entity_id}, {monthly_sensor.entity_id}"
     )
 
-    # Immediately fetch data upon install
-    hass.async_create_task(consumption_sensor.async_update())
+    # Check if we need full historical fetch (after migration)
+    if entry.data.get("historical_fetch_needed", False):
+        _LOGGER.warning("[EnelGrid] Historical fetch needed, starting background task...")
+        hass.async_create_task(
+            historical_fetch_task(hass, entry, consumption_sensor)
+        )
+    else:
+        # Normal behavior: immediately fetch current data
+        hass.async_create_task(consumption_sensor.async_update())
 
     # Set up daily update
     async def daily_update_callback(_):
@@ -92,11 +262,11 @@ class EnelGridConsumptionSensor(SensorEntity):
     def __init__(self, hass, entry):
         self.hass = hass
         self.entry_id = entry.entry_id
-        self._username = entry.data.get(CONF_USERNAME, entry.data.get("username"))
-        self._password = entry.data.get(CONF_PASSWORD, entry.data.get("password"))
-        self._pod = _get_config_value(entry.data, CONF_POD, ["pod:", "pod: "])
-        self._numero_utente = _get_config_value(entry.data, CONF_USER_NUMBER, ["numero utente", "numero_utente"])
-        self._price_per_kwh = entry.data.get(CONF_PRICE_PER_KWH, 0.33)
+        self._username = entry.data[CONF_USERNAME]
+        self._password = entry.data[CONF_PASSWORD]
+        self._pod = entry.data[CONF_POD]
+        self._numero_utente = entry.data[CONF_USER_NUMBER]
+        self._price_per_kwh = entry.data[CONF_PRICE_PER_KWH]
         self._attr_name = "enelgrid Daily Import"
         self._state = None
         self.session = None
@@ -143,8 +313,21 @@ class EnelGridConsumptionSensor(SensorEntity):
                 await self.session.close()
 
     async def save_to_home_assistant(
-        self, all_data_by_date, pod, entry_id, price_per_kwh
+        self, all_data_by_date, pod, entry_id, price_per_kwh, cumulative_offset=None
     ):
+        """Save data to Home Assistant statistics.
+
+        Args:
+            all_data_by_date: Dict of date -> list of data points
+            pod: POD identifier
+            entry_id: Config entry ID
+            price_per_kwh: Price per kWh for cost calculation
+            cumulative_offset: Optional pre-calculated offset. If None, will read from DB.
+                              This is used by historical_fetch_task to avoid race conditions.
+
+        Returns:
+            The final cumulative value after saving (for updating offset in historical fetch)
+        """
 
         object_id_kw = (
             f"enelgrid_{pod.lower().replace('-', '_').replace('.', '_')}_consumption"
@@ -174,64 +357,32 @@ class EnelGridConsumptionSensor(SensorEntity):
             "unit_of_measurement": "EUR",
         }
 
-        # Get last saved timestamp and cumulative value to avoid re-saving old data
-        last_timestamp, cumulative_offset = await self.get_last_statistic(statistic_id_kw)
+        # Get cumulative offset: either provided (historical fetch) or read from DB (daily update)
+        if cumulative_offset is None:
+            cumulative_offset = await self.get_last_cumulative_kwh(statistic_id_kw)
+            _LOGGER.info(f"Read cumulative offset from DB: {cumulative_offset:.2f} kWh")
 
-        # Filter out days that are already in the database
-        # Only save new data (days after the last saved timestamp)
-        new_data_by_date = {}
+        final_cumulative = cumulative_offset  # Track final value for return
+
         for day_date, data_points in all_data_by_date.items():
-            # Check if this day has any data points newer than what's in DB
-            day_has_new_data = False
-            if last_timestamp is None:
-                # DB is empty, save everything
-                day_has_new_data = True
-            else:
-                # Check if any point in this day is newer than last saved
-                for point in data_points:
-                    if point["timestamp"] > last_timestamp:
-                        day_has_new_data = True
-                        break
-
-            if day_has_new_data:
-                new_data_by_date[day_date] = data_points
-
-        if not new_data_by_date:
-            _LOGGER.info(f"No new data to save for {statistic_id_kw} (last saved: {last_timestamp})")
-            return
-
-        _LOGGER.info(
-            f"Saving {len(new_data_by_date)} new days for {statistic_id_kw} "
-            f"(last saved: {last_timestamp}, offset: {cumulative_offset} kWh)"
-        )
-
-        for day_date, data_points in new_data_by_date.items():
             stats_kw = []
             stats_cost = []
 
             for point in data_points:
-                # Skip points that are already in the database
-                if last_timestamp and point["timestamp"] <= last_timestamp:
-                    continue
-
-                # Calculate absolute cumulative value (relative to meter start)
-                absolute_cumulative = point["cumulative_kwh"] + cumulative_offset
-
+                final_value = point["cumulative_kwh"] + cumulative_offset
                 stats_kw.append(
                     {
                         "start": as_utc(point["timestamp"]),
-                        "sum": absolute_cumulative,
+                        "sum": final_value,
                     }
                 )
                 stats_cost.append(
                     {
                         "start": as_utc(point["timestamp"]),
-                        "sum": absolute_cumulative * price_per_kwh,
+                        "sum": final_value * price_per_kwh,  # Use final_value, not point["cumulative_kwh"]!
                     }
                 )
-
-            if not stats_kw:
-                continue
+                final_cumulative = final_value  # Update with each point
 
             try:
                 async_add_external_statistics(self.hass, metadata_kw, stats_kw)
@@ -239,8 +390,7 @@ class EnelGridConsumptionSensor(SensorEntity):
                     self.hass, metadata_cost, stats_cost
                 )
                 _LOGGER.info(
-                    f"Saved {len(stats_kw)} new points for {day_date} "
-                    f"({statistic_id_kw}: {len(stats_kw)}, {statistic_id_cost}: {len(stats_cost)})"
+                    f"Saved {len(stats_kw)} points for {statistic_id_kw} and {len(stats_cost)} for {statistic_id_cost}"
                 )
             except HomeAssistantError as e:
                 _LOGGER.exception(
@@ -248,37 +398,20 @@ class EnelGridConsumptionSensor(SensorEntity):
                 )
                 raise
 
-    async def get_last_statistic(self, statistic_id: str):
-        """Get the last recorded timestamp and cumulative kWh for a given statistic_id.
+        return final_cumulative
 
-        Returns:
-            tuple: (last_timestamp, last_cumulative_kwh)
-                   - last_timestamp: datetime of last saved record, or None if DB is empty
-                   - last_cumulative_kwh: last cumulative value, or 0.0 if DB is empty
-        """
+    async def get_last_cumulative_kwh(self, statistic_id: str):
+        """Get the last recorded cumulative kWh for a given statistic_id."""
         last_stats = await get_instance(self.hass).async_add_executor_job(
             get_last_statistics, self.hass, 1, statistic_id, True, {"sum"}
         )
 
         if last_stats and statistic_id in last_stats:
-            last_record = last_stats[statistic_id][0]
-            last_timestamp = datetime.fromtimestamp(last_record["start"])
-            last_sum = last_record["sum"]
             _LOGGER.info(
-                f"Last recorded for {statistic_id}: {last_timestamp} → {last_sum} kWh"
+                f"Last recorded cumulative sum for {statistic_id}: {last_stats[statistic_id][0]['sum']}"
             )
-            return (last_timestamp, last_sum)
-
-        _LOGGER.info(f"No previous data found for {statistic_id}, starting fresh")
-        return (None, 0.0)
-
-    async def get_last_cumulative_kwh(self, statistic_id: str):
-        """Get the last recorded cumulative kWh for a given statistic_id.
-
-        This method is kept for backwards compatibility but now uses get_last_statistic.
-        """
-        _, cumulative = await self.get_last_statistic(statistic_id)
-        return cumulative
+            return last_stats[statistic_id][0]["sum"]  # Last recorded cumulative sum
+        return 0.0
 
     async def update_monthly_sensor(self, all_data_by_date, entry_id):
         monthly_sensor = self.hass.data.get("enelgrid_monthly_sensor", {}).get(entry_id)

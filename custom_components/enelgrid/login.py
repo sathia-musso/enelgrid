@@ -95,11 +95,17 @@ class EnelGridSession:
 
         _LOGGER.info("Session cookies enriched after SAMLResponse submission.")
 
-    async def fetch_consumption_data(self):
-        """Fetch data after ensuring login."""
+    async def fetch_consumption_data(self, validity_from=None, validity_to=None):
+        """Fetch data after ensuring login.
+
+        Args:
+            validity_from: Optional start date in DDMMYYYY format
+            validity_to: Optional end date in DDMMYYYY format
+        """
         await self.login()
 
-        validity_from, validity_to = get_date_range()
+        if validity_from is None or validity_to is None:
+            validity_from, validity_to = get_date_range()
 
         url = (
             f"{AGGREGATE_CONSUMPTION_URL}?pod={self.pod}&userNumber={self.user_number}"
@@ -107,13 +113,27 @@ class EnelGridSession:
             f"&_={int(datetime.now().timestamp() * 1000)}"
         )
 
-        _LOGGER.info(f"URL: {url}")
+        _LOGGER.info(f"[EnelGrid API] Fetching: {validity_from} → {validity_to}")
 
         async with self.session.get(url) as response:
             response.raise_for_status()
-            json = await response.json()
+            json_data = await response.json()
             await self.close()
-            return json
+
+            # Save raw JSON for debugging
+            try:
+                import os
+                import json as json_module
+                debug_dir = "/config/enelgrid_debug"
+                os.makedirs(debug_dir, exist_ok=True)
+                filename = f"enel_raw_{validity_from}_{validity_to}.json"
+                with open(os.path.join(debug_dir, filename), "w") as f:
+                    json_module.dump(json_data, f, indent=2)
+                _LOGGER.info(f"[EnelGrid Debug] Saved raw JSON to {filename}")
+            except Exception as e:
+                _LOGGER.warning(f"[EnelGrid Debug] Failed to save JSON: {e}")
+
+            return json_data
 
 
 def get_date_range():
