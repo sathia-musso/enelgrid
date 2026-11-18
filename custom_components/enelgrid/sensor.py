@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 
 from homeassistant.components.persistent_notification import async_create
 from homeassistant.components.recorder import get_instance
+from homeassistant.components.recorder.models import StatisticMeanType
 from homeassistant.components.recorder.statistics import (
     async_add_external_statistics,
     get_last_statistics,
@@ -11,6 +12,7 @@ from homeassistant.components.sensor import SensorEntity
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.util.dt import as_utc
+from homeassistant.util.unit_conversion import EnergyConverter
 from homeassistant.components.sensor import SensorDeviceClass
 
 from .const import (
@@ -340,20 +342,22 @@ class EnelGridConsumptionSensor(SensorEntity):
         statistic_id_cost = f"sensor:{object_id_cost}"
 
         metadata_kw = {
-            "has_mean": False,
             "has_sum": True,
+            "mean_type": StatisticMeanType.NONE,
             "name": f"Enel {pod} Consumption",
             "source": "sensor",
             "statistic_id": statistic_id_kw,
+            "unit_class": EnergyConverter.UNIT_CLASS,
             "unit_of_measurement": "kWh",
         }
 
         metadata_cost = {
-            "has_mean": False,
             "has_sum": True,
+            "mean_type": StatisticMeanType.NONE,
             "name": f"Enel {pod} Cost",
             "source": "sensor",
             "statistic_id": statistic_id_cost,
+            "unit_class": None,
             "unit_of_measurement": "EUR",
         }
 
