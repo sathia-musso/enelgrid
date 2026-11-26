@@ -26,7 +26,8 @@ class EnelGridSession:
         self.session = None
 
     async def close(self):
-        await self.session.close()
+        if self.session and not self.session.closed:
+            await self.session.close()
 
     async def get_session_data_key(self):
         """Fetch sessionDataKey from login page."""
@@ -49,6 +50,7 @@ class EnelGridSession:
 
     async def login(self):
         """Complete login process including SAMLResponse submission."""
+        await self.close()
         self.session = aiohttp.ClientSession()
         session_data_key = await self.get_session_data_key()
         saml_response = await self.submit_login_form(session_data_key)
@@ -102,6 +104,13 @@ class EnelGridSession:
             validity_from: Optional start date in DDMMYYYY format
             validity_to: Optional end date in DDMMYYYY format
         """
+        try:
+            return await self._fetch_consumption_data(validity_from, validity_to)
+        finally:
+            # Close the session on errors too (it used to leak on any failure).
+            await self.close()
+
+    async def _fetch_consumption_data(self, validity_from, validity_to):
         await self.login()
 
         if validity_from is None or validity_to is None:
@@ -118,7 +127,6 @@ class EnelGridSession:
         async with self.session.get(url) as response:
             response.raise_for_status()
             json_data = await response.json()
-            await self.close()
 
             # Save raw JSON for debugging
             try:

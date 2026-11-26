@@ -244,20 +244,29 @@ async def async_setup_entry(hass, entry, async_add_entities):
     )
 
     # Check if we need full historical fetch (after migration)
+    # Background tasks bound to the entry are cancelled when it is unloaded,
+    # so a reload does not leave an old fetch running next to the new one.
     if entry.data.get("historical_fetch_needed", False):
         _LOGGER.warning("[EnelGrid] Historical fetch needed, starting background task...")
-        hass.async_create_task(
-            historical_fetch_task(hass, entry, consumption_sensor)
+        entry.async_create_background_task(
+            hass,
+            historical_fetch_task(hass, entry, consumption_sensor),
+            "enelgrid historical fetch",
         )
     else:
         # Normal behavior: immediately fetch current data
-        hass.async_create_task(consumption_sensor.async_update())
+        entry.async_create_background_task(
+            hass, consumption_sensor.async_update(), "enelgrid update"
+        )
 
-    # Set up daily update
+    # Set up daily update; stop it when the entry is unloaded, otherwise
+    # every reload adds one more daily login and import.
     async def daily_update_callback(_):
         await consumption_sensor.async_update()
 
-    async_track_time_interval(hass, daily_update_callback, SCAN_INTERVAL)
+    entry.async_on_unload(
+        async_track_time_interval(hass, daily_update_callback, SCAN_INTERVAL)
+    )
 
 
 class EnelGridConsumptionSensor(SensorEntity):
@@ -272,6 +281,9 @@ class EnelGridConsumptionSensor(SensorEntity):
         self._numero_utente = entry.data[CONF_USER_NUMBER]
         self._price_per_kwh = entry.data[CONF_PRICE_PER_KWH]
         self._attr_name = "enelgrid Daily Import"
+        # Updates are driven by the daily timer in async_setup_entry; entity
+        # polling (SCAN_INTERVAL) would log in and import a second time.
+        self._attr_should_poll = False
         self._state = None
         self.session = None
 
@@ -509,7 +521,10 @@ def parse_enel_hourly_data(data):
     )
 
     if not hourly_aggregation:
-        raise ValueError("No hourly consumption data found in JSON")
+        # Enel omits the aggregation when there is no data for the period
+        # (e.g. before the supply started): that is "no data", not an error.
+        _LOGGER.info("No hourly consumption data in the Enel response")
+        return {}
 
     all_data_by_date = {}
     cumulative_offset = 0
