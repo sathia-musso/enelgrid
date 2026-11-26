@@ -6,7 +6,6 @@ from homeassistant.components.recorder import get_instance
 from homeassistant.components.recorder.models import StatisticMeanType
 from homeassistant.components.recorder.statistics import (
     async_add_external_statistics,
-    get_last_statistics,
     statistics_during_period,
 )
 from homeassistant.components.sensor import SensorEntity
@@ -433,19 +432,6 @@ class EnelGridConsumptionSensor(SensorEntity):
                 return rows[-1]["sum"] or 0.0
         return 0.0
 
-    async def get_last_cumulative_kwh(self, statistic_id: str):
-        """Get the last recorded cumulative kWh for a given statistic_id."""
-        last_stats = await get_instance(self.hass).async_add_executor_job(
-            get_last_statistics, self.hass, 1, statistic_id, True, {"sum"}
-        )
-
-        if last_stats and statistic_id in last_stats:
-            _LOGGER.info(
-                f"Last recorded cumulative sum for {statistic_id}: {last_stats[statistic_id][0]['sum']}"
-            )
-            return last_stats[statistic_id][0]["sum"]  # Last recorded cumulative sum
-        return 0.0
-
     async def update_monthly_sensor(self, all_data_by_date, entry_id):
         monthly_sensor = self.hass.data.get("enelgrid_monthly_sensor", {}).get(entry_id)
 
@@ -530,9 +516,14 @@ def parse_enel_hourly_data(data):
     )
 
     if not hourly_aggregation:
-        # Enel omits the aggregation when there is no data for the period
-        # (e.g. before the supply started): that is "no data", not an error.
-        _LOGGER.info("No hourly consumption data in the Enel response")
+        # A response without the hourly aggregation carries no data for the
+        # period: import nothing instead of failing the update. Log the keys
+        # so that a change of the response format is not mistaken for this.
+        _LOGGER.warning(
+            "No hourly consumption data in the Enel response (keys: %s, aggregations: %s)",
+            sorted(data) if isinstance(data, dict) else type(data).__name__,
+            [agg.get("referenceID") for agg in aggregations],
+        )
         return {}
 
     all_data_by_date = {}

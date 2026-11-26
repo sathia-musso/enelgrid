@@ -43,6 +43,12 @@ STAT_COST = "sensor:enelgrid_it001e00000000_kw_cost"
 PRICE = 0.2
 
 
+@pytest.fixture(autouse=True)
+async def rome_time_zone(hass: HomeAssistant):
+    """Enel data are in Italian local time (the windows include 25 October)."""
+    await hass.config.async_set_time_zone("Europe/Rome")
+
+
 def hourly(day: date) -> list[float]:
     """Deterministic, day-dependent hourly values (kWh)."""
     return [round(0.1 + ((day.day * 7 + h) % 10) / 100, 3) for h in range(24)]
