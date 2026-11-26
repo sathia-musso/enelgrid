@@ -90,6 +90,18 @@ async def historical_fetch_task(hass, entry, sensor):
             )
 
             if not data_points or len(data_points) == 0:
+                today = datetime.now()
+                if (current_date.year, current_date.month) == (today.year, today.month):
+                    # Enel publishes with a delay of a few days: in the first
+                    # days of a month the current month is still empty. That
+                    # is not the end of the history, so go on to the
+                    # previous month instead of stopping.
+                    _LOGGER.warning(
+                        f"[EnelGrid Historical] No data yet for the current month "
+                        f"{current_date.strftime('%Y-%m')}, continuing with the previous one"
+                    )
+                    current_date = current_date.replace(day=1) - timedelta(days=1)
+                    continue
                 _LOGGER.warning(
                     f"[EnelGrid Historical] No data returned for {current_date.strftime('%Y-%m')}, "
                     "reached the limit of available historical data"

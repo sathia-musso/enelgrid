@@ -273,3 +273,27 @@ def test_monthly_total_without_data():
     from custom_components.enelgrid.sensor import monthly_total
 
     assert monthly_total({}) == (0.0, None, None)
+
+
+async def test_resync_skips_an_empty_current_month(hass, sensor, freezer):
+    """Early in a month Enel has not published it yet: that is not the end.
+
+    The resync must go on to the previous month instead of stopping, and stop
+    at the first empty month after that.
+    """
+    freezer.move_to("2026-12-02 10:00:00+01:00")
+    entry = mark_for_resync(hass)
+    await run_resync(
+        hass,
+        entry,
+        sensor,
+        empty_payload(),  # December: nothing published yet
+        payload(date(2026, 11, 1), date(2026, 11, 3)),
+        empty_payload(),  # October: end of the history
+    )
+
+    assert await stored_sums(hass, date(2026, 11, 1), date(2026, 11, 3)) == pytest.approx(
+        expected_sums(date(2026, 11, 1), date(2026, 11, 3))
+    )
+    assert entry.data["historical_fetch_completed"] is True
+    assert entry.data["historical_fetch_needed"] is False
