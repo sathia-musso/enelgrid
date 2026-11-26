@@ -393,7 +393,8 @@ async def test_import_status_is_written_after_setup(hass: HomeAssistant):
     )
     with patch("custom_components.enelgrid.sensor.EnelGridSession", return_value=session):
         assert await hass.config_entries.async_setup(entry.entry_id)
-        await hass.async_block_till_done()
+        # The first fetch is an entry background task.
+        await hass.async_block_till_done(wait_background_tasks=True)
 
         assert hass.states.get("sensor.enelgrid_daily_import").state == "Imported"
         monthly = hass.states.get("sensor.enelgrid_it1234567890_monthly_consumption")
