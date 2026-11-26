@@ -26,7 +26,8 @@ class EnelGridSession:
         self.session = None
 
     async def close(self):
-        await self.session.close()
+        if self.session and not self.session.closed:
+            await self.session.close()
 
     async def get_session_data_key(self):
         """Fetch sessionDataKey from login page."""
@@ -49,6 +50,7 @@ class EnelGridSession:
 
     async def login(self):
         """Complete login process including SAMLResponse submission."""
+        await self.close()
         self.session = aiohttp.ClientSession()
         session_data_key = await self.get_session_data_key()
         saml_response = await self.submit_login_form(session_data_key)
@@ -102,6 +104,13 @@ class EnelGridSession:
             validity_from: Optional start date in DDMMYYYY format
             validity_to: Optional end date in DDMMYYYY format
         """
+        try:
+            return await self._fetch_consumption_data(validity_from, validity_to)
+        finally:
+            # Close the session on errors too (it used to leak on any failure).
+            await self.close()
+
+    async def _fetch_consumption_data(self, validity_from, validity_to):
         await self.login()
 
         if validity_from is None or validity_to is None:
@@ -118,20 +127,6 @@ class EnelGridSession:
         async with self.session.get(url) as response:
             response.raise_for_status()
             json_data = await response.json()
-            await self.close()
-
-            # Save raw JSON for debugging
-            try:
-                import os
-                import json as json_module
-                debug_dir = "/config/enelgrid_debug"
-                os.makedirs(debug_dir, exist_ok=True)
-                filename = f"enel_raw_{validity_from}_{validity_to}.json"
-                with open(os.path.join(debug_dir, filename), "w") as f:
-                    json_module.dump(json_data, f, indent=2)
-                _LOGGER.info(f"[EnelGrid Debug] Saved raw JSON to {filename}")
-            except Exception as e:
-                _LOGGER.warning(f"[EnelGrid Debug] Failed to save JSON: {e}")
 
             return json_data
 

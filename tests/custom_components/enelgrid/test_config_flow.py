@@ -309,3 +309,115 @@ async def test_unload_and_reload_config_entry(hass: HomeAssistant):
 
         assert await hass.config_entries.async_setup(entry.entry_id)
         mock_setup.assert_called_once()
+
+
+async def test_reauth_reloads_entry_with_new_credentials(hass: HomeAssistant):
+    """After a successful reauth the entry is reloaded with the new password.
+
+    The sensor reads the credentials once at setup: without a reload it kept
+    logging in with the old password.
+    """
+    from homeassistant.config_entries import ConfigEntryState
+
+    try:
+        from pytest_homeassistant_custom_component.common import MockConfigEntry
+    except ImportError:
+        from pytest_homeassistant.common import MockConfigEntry
+
+    old = {**USER_INPUT, CONF_PASSWORD: "oldpass"}
+    entry = MockConfigEntry(domain=DOMAIN, data=old, unique_id=old[CONF_POD], version=5)
+    entry.add_to_hass(hass)
+
+    mock_session = MagicMock()
+    mock_session.login = AsyncMock()
+    mock_session.close = AsyncMock()
+
+    with patch(
+        "custom_components.enelgrid.async_setup_entry", return_value=True
+    ) as mock_setup, patch(
+        "custom_components.enelgrid.async_unload_entry", return_value=True
+    ), patch(
+        "custom_components.enelgrid.config_flow.EnelGridSession",
+        return_value=mock_session,
+    ):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        assert mock_setup.call_count == 1
+
+        result = await entry.start_reauth_flow(hass)
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], user_input={**old, CONF_PASSWORD: "newpass"}
+        )
+        await hass.async_block_till_done()
+
+    assert result["type"] == data_entry_flow.FlowResultType.ABORT
+    assert result["reason"] == "reauth_successful"
+    assert entry.data[CONF_PASSWORD] == "newpass"
+    assert mock_setup.call_count == 2
+    assert entry.state is ConfigEntryState.LOADED
+
+
+async def test_import_status_is_written_after_setup(hass: HomeAssistant):
+    """The status sensor leaves 'unknown' after the first fetch (no polling)."""
+    try:
+        from pytest_homeassistant_custom_component.common import MockConfigEntry
+    except ImportError:
+        from pytest_homeassistant.common import MockConfigEntry
+
+    entry = MockConfigEntry(
+        domain=DOMAIN, data=USER_INPUT, unique_id=USER_INPUT[CONF_POD], version=5
+    )
+    entry.add_to_hass(hass)
+
+    session = MagicMock()
+    session.close = AsyncMock()
+    session.fetch_consumption_data = AsyncMock(
+        return_value={
+            "data": {
+                "aggregationResult": {
+                    "aggregations": [
+                        {
+                            "referenceID": "hourlyConsumption",
+                            "results": [
+                                {
+                                    "date": "01112026",
+                                    "binValues": [
+                                        {"name": f"H{h}", "value": 0.5} for h in range(1, 25)
+                                    ],
+                                }
+                            ],
+                        }
+                    ]
+                }
+            }
+        }
+    )
+    with patch("custom_components.enelgrid.sensor.EnelGridSession", return_value=session):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        # The first fetch is an entry background task.
+        await hass.async_block_till_done(wait_background_tasks=True)
+
+        assert hass.states.get("sensor.enelgrid_daily_import").state == "Imported"
+        monthly = hass.states.get("sensor.enelgrid_it1234567890_monthly_consumption")
+        assert float(monthly.state) == pytest.approx(12.0)
+
+        assert await hass.config_entries.async_unload(entry.entry_id)
+        await hass.async_block_till_done()
+
+
+async def test_migration_to_v5_schedules_a_resync(hass: HomeAssistant):
+    """Entries from <= 1.6.0 get one resync to repair the #20 jumps."""
+    try:
+        from pytest_homeassistant_custom_component.common import MockConfigEntry
+    except ImportError:
+        from pytest_homeassistant.common import MockConfigEntry
+
+    from custom_components.enelgrid import async_migrate_entry
+
+    entry = MockConfigEntry(domain=DOMAIN, data=USER_INPUT, version=4)
+    entry.add_to_hass(hass)
+
+    assert await async_migrate_entry(hass, entry)
+
+    assert entry.version == 5
+    assert entry.data["historical_fetch_needed"] is True
+    assert entry.data["clear_statistics_needed"] is True
