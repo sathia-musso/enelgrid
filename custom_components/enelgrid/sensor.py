@@ -453,12 +453,34 @@ class EnelGridConsumptionSensor(SensorEntity):
             _LOGGER.error(f"Monthly sensor is not available for entry {entry_id}!")
             return
 
-        total_kwh = sum(
-            points[-1]["cumulative_kwh"] for points in all_data_by_date.values()
-        )
+        total_kwh, month, last_day = monthly_total(all_data_by_date)
+        if month is None:
+            return
 
-        monthly_sensor.set_total(total_kwh)
-        _LOGGER.info(f"Updated monthly sensor to {total_kwh} kWh")
+        monthly_sensor.set_total(total_kwh, month, last_day)
+        _LOGGER.info(f"Updated monthly sensor to {total_kwh} kWh ({month})")
+
+
+def monthly_total(all_data_by_date):
+    """Return (kWh, "YYYY-MM", last day) for the month of the latest data.
+
+    ``cumulative_kwh`` grows across the whole fetched window (it does not
+    restart every day), so the old sum of the daily end values counted the
+    earlier days again and again (#11). The month total is the sum of the
+    hourly values of that month. Enel publishes data with a delay of a few
+    days, so the month is the one of the latest day returned, not today.
+    """
+    days = [d for d, points in all_data_by_date.items() if points]
+    if not days:
+        return 0.0, None, None
+    last_day = max(days)
+    total = sum(
+        point["kwh"]
+        for day, points in all_data_by_date.items()
+        if (day.year, day.month) == (last_day.year, last_day.month)
+        for point in points
+    )
+    return round(total, 3), last_day.strftime("%Y-%m"), last_day
 
 
 class EnelGridMonthlySensor(SensorEntity):
@@ -478,8 +500,13 @@ class EnelGridMonthlySensor(SensorEntity):
     def state(self):
         return self._state
 
-    def set_total(self, new_total):
+    def set_total(self, new_total, month=None, last_day=None):
         self._state = new_total
+        self._attr_extra_state_attributes = {
+            "source": "enelgrid",
+            "month": month,
+            "last_day": last_day.isoformat() if last_day else None,
+        }
         self.async_write_ha_state()
 
 

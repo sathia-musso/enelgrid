@@ -211,3 +211,22 @@ async def test_resync_after_clear_starts_from_a_clean_table(hass, sensor):
     )
     assert entry.data["clear_statistics_needed"] is False
     assert entry.data["historical_fetch_completed"] is True
+
+
+def test_monthly_total_is_the_sum_of_the_latest_month():
+    """The monthly sensor reports the month of the latest data only (#11)."""
+    from custom_components.enelgrid.sensor import monthly_total
+
+    data = parse_enel_hourly_data(payload(date(2026, 10, 1), date(2026, 11, 3)))
+    total, month, last_day = monthly_total(data)
+
+    november = sum(sum(hourly(date(2026, 11, d))) for d in (1, 2, 3))
+    assert total == pytest.approx(november, abs=1e-3)
+    assert month == "2026-11"
+    assert last_day == date(2026, 11, 3)
+
+
+def test_monthly_total_without_data():
+    from custom_components.enelgrid.sensor import monthly_total
+
+    assert monthly_total({}) == (0.0, None, None)
