@@ -7,14 +7,25 @@ import pytest
 
 # The recorder test fixture autospecs a few recorder helpers. On Python 3.14
 # that evaluates their lazy annotations, and names imported only under
-# TYPE_CHECKING raise NameError. Make them resolvable.
-import homeassistant.components.recorder.migration as _migration  # noqa: E402
-import homeassistant.helpers.recorder as _helpers_recorder  # noqa: E402
-from homeassistant.components.recorder.core import Recorder as _Recorder  # noqa: E402
-from sqlalchemy.orm.session import Session as _Session  # noqa: E402
+# TYPE_CHECKING raise NameError. Expose them where they are missing. Test-only;
+# drop it once pytest-homeassistant handles this itself.
+def _expose_type_checking_names():
+    try:
+        import homeassistant.components.recorder.migration as migration
+        import homeassistant.helpers.recorder as helpers_recorder
+        from homeassistant.components.recorder.core import Recorder
+        from sqlalchemy.orm.session import Session
+    except ImportError:
+        return
+    for module, name, value in (
+        (migration, "Recorder", Recorder),
+        (helpers_recorder, "Session", Session),
+    ):
+        if not hasattr(module, name):
+            setattr(module, name, value)
 
-_migration.Recorder = _Recorder
-_helpers_recorder.Session = _Session
+
+_expose_type_checking_names()
 
 
 @pytest.fixture(autouse=True)
