@@ -128,19 +128,6 @@ class EnelGridSession:
             response.raise_for_status()
             json_data = await response.json()
 
-            # Save raw JSON for debugging
-            try:
-                import os
-                import json as json_module
-                debug_dir = "/config/enelgrid_debug"
-                os.makedirs(debug_dir, exist_ok=True)
-                filename = f"enel_raw_{validity_from}_{validity_to}.json"
-                with open(os.path.join(debug_dir, filename), "w") as f:
-                    json_module.dump(json_data, f, indent=2)
-                _LOGGER.info(f"[EnelGrid Debug] Saved raw JSON to {filename}")
-            except Exception as e:
-                _LOGGER.warning(f"[EnelGrid Debug] Failed to save JSON: {e}")
-
             return json_data
 
 

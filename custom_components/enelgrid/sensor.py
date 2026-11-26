@@ -113,29 +113,11 @@ async def historical_fetch_task(hass, entry, sensor):
             data = await session.fetch_consumption_data(validity_from, validity_to)
             data_points = parse_enel_hourly_data(data)
 
-            # Save parsed data_points for debugging
-            try:
-                import os
-                import json
-                debug_dir = "/config/enelgrid_debug"
-                os.makedirs(debug_dir, exist_ok=True)
-                filename = f"parsed_{validity_from}_{validity_to}.json"
-                # Convert data_points to JSON-serializable format
-                serializable = {}
-                for date_key, points in data_points.items():
-                    serializable[str(date_key)] = [
-                        {
-                            "timestamp": p["timestamp"].isoformat(),
-                            "kwh": p["kwh"],
-                            "cumulative_kwh": p["cumulative_kwh"]
-                        }
-                        for p in points
-                    ]
-                with open(os.path.join(debug_dir, filename), "w") as f:
-                    json.dump(serializable, f, indent=2)
-                _LOGGER.warning(f"[EnelGrid Debug] Saved parsed data to {filename}")
-            except Exception as e:
-                _LOGGER.warning(f"[EnelGrid Debug] Failed to save parsed data: {e}")
+            _LOGGER.debug(
+                "[EnelGrid Historical] %s: %d days parsed",
+                current_date.strftime("%Y-%m"),
+                len(data_points),
+            )
 
             if not data_points or len(data_points) == 0:
                 _LOGGER.warning(
