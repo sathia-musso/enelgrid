@@ -309,3 +309,48 @@ async def test_unload_and_reload_config_entry(hass: HomeAssistant):
 
         assert await hass.config_entries.async_setup(entry.entry_id)
         mock_setup.assert_called_once()
+
+
+async def test_reauth_reloads_entry_with_new_credentials(hass: HomeAssistant):
+    """After a successful reauth the entry is reloaded with the new password.
+
+    The sensor reads the credentials once at setup: without a reload it kept
+    logging in with the old password.
+    """
+    from homeassistant.config_entries import ConfigEntryState
+
+    try:
+        from pytest_homeassistant_custom_component.common import MockConfigEntry
+    except ImportError:
+        from pytest_homeassistant.common import MockConfigEntry
+
+    old = {**USER_INPUT, CONF_PASSWORD: "oldpass"}
+    entry = MockConfigEntry(domain=DOMAIN, data=old, unique_id=old[CONF_POD], version=4)
+    entry.add_to_hass(hass)
+
+    mock_session = MagicMock()
+    mock_session.login = AsyncMock()
+    mock_session.close = AsyncMock()
+
+    with patch(
+        "custom_components.enelgrid.async_setup_entry", return_value=True
+    ) as mock_setup, patch(
+        "custom_components.enelgrid.async_unload_entry", return_value=True
+    ), patch(
+        "custom_components.enelgrid.config_flow.EnelGridSession",
+        return_value=mock_session,
+    ):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        assert mock_setup.call_count == 1
+
+        result = await entry.start_reauth_flow(hass)
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], user_input={**old, CONF_PASSWORD: "newpass"}
+        )
+        await hass.async_block_till_done()
+
+    assert result["type"] == data_entry_flow.FlowResultType.ABORT
+    assert result["reason"] == "reauth_successful"
+    assert entry.data[CONF_PASSWORD] == "newpass"
+    assert mock_setup.call_count == 2
+    assert entry.state is ConfigEntryState.LOADED

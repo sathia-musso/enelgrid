@@ -58,10 +58,12 @@ class EnelGridConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     self._abort_if_unique_id_configured()
 
                 if self.reauth_entry:
-                    self.hass.config_entries.async_update_entry(
+                    # Reload so the sensor picks up the new credentials: it
+                    # reads them once at setup, and without a reload it kept
+                    # logging in with the old password and asking for reauth.
+                    return self.async_update_reload_and_abort(
                         self.reauth_entry, data=user_input
                     )
-                    return self.async_abort(reason="reauth_successful")
 
                 # Save all user-provided data to the config entry
                 return self.async_create_entry(
