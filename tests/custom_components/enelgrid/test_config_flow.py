@@ -421,3 +421,40 @@ async def test_migration_to_v5_schedules_a_resync(hass: HomeAssistant):
     assert entry.version == 5
     assert entry.data["historical_fetch_needed"] is True
     assert entry.data["clear_statistics_needed"] is True
+
+
+async def test_resync_sets_the_monthly_total(hass: HomeAssistant, no_real_enel_session):
+    """After the migration resync the monthly sensor has its value at once."""
+    try:
+        from pytest_homeassistant_custom_component.common import MockConfigEntry
+    except ImportError:
+        from pytest_homeassistant.common import MockConfigEntry
+
+    day = {
+        "date": "01112026",
+        "binValues": [{"name": f"H{h}", "value": 0.25} for h in range(1, 25)],
+    }
+    no_real_enel_session.fetch_consumption_data.side_effect = [
+        {"data": {"aggregationResult": {"aggregations": [
+            {"referenceID": "hourlyConsumption", "results": [day]}
+        ]}}},
+        {"data": {"aggregationResult": {"aggregations": []}}},
+    ]
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={**USER_INPUT, "historical_fetch_needed": True, "clear_statistics_needed": True},
+        unique_id=USER_INPUT[CONF_POD],
+        version=5,
+    )
+    entry.add_to_hass(hass)
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
+
+    monthly = hass.states.get("sensor.enelgrid_it1234567890_monthly_consumption")
+    assert float(monthly.state) == pytest.approx(6.0)
+    assert hass.states.get("sensor.enelgrid_daily_import").state == "Imported"
+    assert entry.data["historical_fetch_completed"] is True
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()

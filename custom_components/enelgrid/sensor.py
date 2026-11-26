@@ -195,6 +195,10 @@ async def historical_fetch_task(hass, entry, sensor):
                 exc_info=True
             )
 
+    # The daily update sets the monthly total too; after a resync nothing
+    # else would until the next day.
+    await sensor.update_monthly_sensor(all_months_data[-1]["data_points"], entry.entry_id)
+
     # Mark as completed (only reached when at least one month was fetched)
     new_data = dict(entry.data)
     new_data["historical_fetch_needed"] = False
