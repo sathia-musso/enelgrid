@@ -7,6 +7,7 @@ from homeassistant.components.recorder.models import StatisticMeanType
 from homeassistant.components.recorder.statistics import (
     async_add_external_statistics,
     get_last_statistics,
+    statistics_during_period,
 )
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
@@ -186,7 +187,14 @@ async def historical_fetch_task(hass, entry, sensor):
     # (async_add_external_statistics doesn't immediately update DB)
     object_id_kw = f"enelgrid_{pod.lower().replace('-', '_').replace('.', '_')}_consumption"
     statistic_id_kw = f"sensor:{object_id_kw}"
-    cumulative_offset = await sensor.get_last_cumulative_kwh(statistic_id_kw)
+    # The base is the sum stored just before the oldest hour we are about to
+    # write, NOT the latest sum: a resync rewrites hours that are already
+    # stored, and using the latest sum as base would count them twice (#20).
+    cumulative_offset = 0.0
+    if all_months_data:
+        cumulative_offset = await sensor.get_sum_before(
+            statistic_id_kw, first_timestamp(all_months_data[0]["data_points"])
+        )
     _LOGGER.warning(f"[EnelGrid Historical] Starting with cumulative offset: {cumulative_offset:.2f} kWh")
 
     for month_data in all_months_data:
@@ -361,9 +369,17 @@ class EnelGridConsumptionSensor(SensorEntity):
             "unit_of_measurement": "EUR",
         }
 
-        # Get cumulative offset: either provided (historical fetch) or read from DB (daily update)
+        # Get cumulative offset: either provided (historical fetch) or read from DB.
+        # The API restarts its cumulative value from 0 at the start of the
+        # requested window, and the window overlaps hours that are already
+        # stored (it always starts on the 1st of the previous month). The base
+        # must therefore be the sum stored just before the first hour of the
+        # window; the latest stored sum would count the overlap twice.
         if cumulative_offset is None:
-            cumulative_offset = await self.get_last_cumulative_kwh(statistic_id_kw)
+            first = first_timestamp(all_data_by_date)
+            if first is None:
+                return 0.0
+            cumulative_offset = await self.get_sum_before(statistic_id_kw, first)
             _LOGGER.info(f"Read cumulative offset from DB: {cumulative_offset:.2f} kWh")
 
         final_cumulative = cumulative_offset  # Track final value for return
@@ -403,6 +419,31 @@ class EnelGridConsumptionSensor(SensorEntity):
                 raise
 
         return final_cumulative
+
+    async def get_sum_before(self, statistic_id: str, before: datetime) -> float:
+        """Return the sum of the last statistic that starts before ``before``.
+
+        Returns 0.0 when nothing is stored before that hour (first import).
+        """
+        end = as_utc(before)
+        recorder = get_instance(self.hass)
+        # Look back a little first, then further: there can be a gap of any
+        # length between two imports (integration disabled, Enel outage).
+        for lookback in (timedelta(days=2), timedelta(days=62), timedelta(days=3660)):
+            stats = await recorder.async_add_executor_job(
+                statistics_during_period,
+                self.hass,
+                end - lookback,
+                end,
+                {statistic_id},
+                "hour",
+                None,
+                {"sum"},
+            )
+            rows = stats.get(statistic_id)
+            if rows:
+                return rows[-1]["sum"] or 0.0
+        return 0.0
 
     async def get_last_cumulative_kwh(self, statistic_id: str):
         """Get the last recorded cumulative kWh for a given statistic_id."""
@@ -452,6 +493,14 @@ class EnelGridMonthlySensor(SensorEntity):
     def set_total(self, new_total):
         self._state = new_total
         self.async_write_ha_state()
+
+
+def first_timestamp(all_data_by_date):
+    """Return the earliest hour in a parsed day -> points mapping, or None."""
+    return min(
+        (p["timestamp"] for points in all_data_by_date.values() for p in points),
+        default=None,
+    )
 
 
 def parse_enel_hourly_data(data):
