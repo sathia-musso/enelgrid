@@ -170,3 +170,44 @@ async def test_backfill_older_month_does_not_double_count(hass, sensor):
     assert await stored_sums(hass, date(2026, 10, 1), date(2026, 11, 5)) == pytest.approx(
         expected_sums(date(2026, 10, 1), date(2026, 11, 5))
     )
+
+
+def empty_payload() -> dict:
+    return {
+        "data": {
+            "aggregationResult": {
+                "aggregations": [{"referenceID": "hourlyConsumption", "results": []}]
+            }
+        }
+    }
+
+
+async def test_resync_after_clear_starts_from_a_clean_table(hass, sensor):
+    """A migration resync clears the old sums before importing (#20)."""
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from custom_components.enelgrid.sensor import historical_fetch_task
+
+    # Old, corrupted statistics for the same hours.
+    await import_window(hass, sensor, date(2026, 10, 1), date(2026, 10, 3))
+    await import_window(hass, sensor, date(2026, 10, 1), date(2026, 10, 3))
+
+    entry = hass.config_entries.async_entries(DOMAIN)[0]
+    hass.config_entries.async_update_entry(
+        entry,
+        data={**entry.data, "clear_statistics_needed": True, "historical_fetch_needed": True},
+    )
+
+    session = MagicMock()
+    session.fetch_consumption_data = AsyncMock(
+        side_effect=[payload(date(2026, 10, 1), date(2026, 10, 3)), empty_payload()]
+    )
+    with patch("custom_components.enelgrid.sensor.EnelGridSession", return_value=session):
+        await historical_fetch_task(hass, entry, sensor)
+    await async_wait_recording_done(hass)
+
+    assert await stored_sums(hass, date(2026, 10, 1), date(2026, 10, 3)) == pytest.approx(
+        expected_sums(date(2026, 10, 1), date(2026, 10, 3))
+    )
+    assert entry.data["clear_statistics_needed"] is False
+    assert entry.data["historical_fetch_completed"] is True

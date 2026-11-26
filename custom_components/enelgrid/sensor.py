@@ -52,24 +52,18 @@ async def historical_fetch_task(hass, entry, sensor):
         statistic_id_cost = f"sensor:enelgrid_{pod_normalized}_kw_cost"
 
         try:
-            from homeassistant.components.recorder.statistics import clear_statistics
+            # clear_statistics must run in the recorder thread: queue it and
+            # wait for the recorder, so the import below starts from a clean
+            # table instead of reading the old sums as its base.
             recorder_instance = get_instance(hass)
-
-            # Clear consumption statistics
-            await recorder_instance.async_add_executor_job(
-                clear_statistics,
-                recorder_instance,
-                [statistic_id_consumption]
+            recorder_instance.async_clear_statistics(
+                [statistic_id_consumption, statistic_id_cost]
             )
-            _LOGGER.warning(f"[EnelGrid Historical] Cleared consumption statistics: {statistic_id_consumption}")
-
-            # Clear cost statistics
-            await recorder_instance.async_add_executor_job(
-                clear_statistics,
-                recorder_instance,
-                [statistic_id_cost]
+            await recorder_instance.async_block_till_done()
+            _LOGGER.warning(
+                f"[EnelGrid Historical] Cleared statistics: "
+                f"{statistic_id_consumption}, {statistic_id_cost}"
             )
-            _LOGGER.warning(f"[EnelGrid Historical] Cleared cost statistics: {statistic_id_cost}")
 
             # Clear the flag
             new_data = dict(entry.data)
