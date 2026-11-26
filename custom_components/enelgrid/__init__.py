@@ -38,6 +38,15 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.config_entries.async_update_entry(entry, version=4)
         _LOGGER.warning("[EnelGrid Migration] Migration to version 4 complete")
 
+    if entry.version == 4:
+        # Version 4 -> 5: every daily update up to 1.6.0 added the re-imported
+        # window on top of the latest sum, so stored statistics have jumps
+        # (#20). Clear and re-import what Enel still serves. The clear only
+        # happens once data has been fetched, and only over the fetched range.
+        await _clear_statistics_and_mark_fetch(hass, entry, "v4→v5")
+        hass.config_entries.async_update_entry(entry, version=5)
+        _LOGGER.warning("[EnelGrid Migration] Migration to version 5 complete")
+
     return True
 
 
@@ -60,7 +69,7 @@ async def _clear_statistics_and_mark_fetch(hass: HomeAssistant, entry: ConfigEnt
     """Mark for clearing statistics and full historical re-fetch.
 
     Note: We can't clear statistics here because migration runs in the main thread.
-    The historical_fetch_task will clear statistics before fetching new data.
+    The historical_fetch_task clears the re-imported range after fetching.
     """
     # Try multiple key formats for POD (handle legacy config entries)
     pod = entry.data.get(CONF_POD)

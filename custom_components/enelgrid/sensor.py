@@ -9,8 +9,10 @@ from homeassistant.components.recorder.statistics import (
     statistics_during_period,
 )
 from homeassistant.components.sensor import SensorEntity
+from homeassistant.core import callback
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.util import dt as dt_util
 from homeassistant.util.dt import as_utc
 from homeassistant.util.unit_conversion import EnergyConverter
 from homeassistant.components.sensor import SensorDeviceClass
@@ -41,37 +43,6 @@ async def historical_fetch_task(hass, entry, sensor):
     password = entry.data[CONF_PASSWORD]
     numero_utente = entry.data[CONF_USER_NUMBER]
     price_per_kwh = entry.data[CONF_PRICE_PER_KWH]
-
-    # Check if we need to clear old statistics first (from migration)
-    if entry.data.get("clear_statistics_needed", False):
-        _LOGGER.warning("[EnelGrid Historical] Clearing old statistics as requested by migration...")
-
-        pod_normalized = pod.lower().replace('-', '_').replace('.', '_')
-        statistic_id_consumption = f"sensor:enelgrid_{pod_normalized}_consumption"
-        statistic_id_cost = f"sensor:enelgrid_{pod_normalized}_kw_cost"
-
-        try:
-            # clear_statistics must run in the recorder thread: queue it and
-            # wait for the recorder, so the import below starts from a clean
-            # table instead of reading the old sums as its base.
-            recorder_instance = get_instance(hass)
-            recorder_instance.async_clear_statistics(
-                [statistic_id_consumption, statistic_id_cost]
-            )
-            await recorder_instance.async_block_till_done()
-            _LOGGER.warning(
-                f"[EnelGrid Historical] Cleared statistics: "
-                f"{statistic_id_consumption}, {statistic_id_cost}"
-            )
-
-            # Clear the flag
-            new_data = dict(entry.data)
-            new_data["clear_statistics_needed"] = False
-            hass.config_entries.async_update_entry(entry, data=new_data)
-
-        except Exception as e:
-            _LOGGER.error(f"[EnelGrid Historical] Failed to clear statistics: {e}", exc_info=True)
-            # Continue anyway - better to have duplicate data than no data
 
     current_date = datetime.now()
     months_fetched = 0
@@ -156,20 +127,48 @@ async def historical_fetch_task(hass, entry, sensor):
         f"{total_days} days total. Now saving in chronological order..."
     )
 
+    if not all_months_data:
+        # Nothing came back (Enel down, login changed...): leave the stored
+        # statistics and the flags alone, so the resync runs again at the next
+        # setup instead of being marked done with an empty history.
+        _LOGGER.warning(
+            "[EnelGrid Historical] No data fetched, statistics left untouched; "
+            "the resync will be retried at the next setup"
+        )
+        return
+
     all_months_data.reverse()  # Oldest first
 
-    # Read offset ONCE at the beginning to avoid race conditions
-    # (async_add_external_statistics doesn't immediately update DB)
-    object_id_kw = f"enelgrid_{pod.lower().replace('-', '_').replace('.', '_')}_consumption"
-    statistic_id_kw = f"sensor:{object_id_kw}"
-    # The base is the sum stored just before the oldest hour we are about to
+    pod_normalized = pod.lower().replace('-', '_').replace('.', '_')
+    statistic_id_kw = f"sensor:enelgrid_{pod_normalized}_consumption"
+    statistic_id_cost = f"sensor:enelgrid_{pod_normalized}_kw_cost"
+    oldest = first_timestamp(all_months_data[0]["data_points"])
+
+    if entry.data.get("clear_statistics_needed", False):
+        # Clear only the hours we are about to re-import, and only now that
+        # the data is in hand: anything older than what Enel still serves is
+        # kept, and a failed fetch never wipes the history.
+        try:
+            await clear_statistics_from(
+                hass, [statistic_id_kw, statistic_id_cost], oldest
+            )
+            _LOGGER.warning(
+                "[EnelGrid Historical] Cleared statistics from %s", oldest
+            )
+            new_data = dict(entry.data)
+            new_data["clear_statistics_needed"] = False
+            hass.config_entries.async_update_entry(entry, data=new_data)
+        except Exception as e:
+            # The import below is idempotent, so it still fixes every hour it
+            # rewrites; only stray rows inside the range would remain.
+            _LOGGER.error(f"[EnelGrid Historical] Failed to clear statistics: {e}", exc_info=True)
+
+    # Read the base ONCE and chain the months in memory: the statistics we
+    # queue are not in the database yet when the next month is saved. The
+    # base is the sum stored just before the oldest hour we are about to
     # write, NOT the latest sum: a resync rewrites hours that are already
     # stored, and using the latest sum as base would count them twice (#20).
-    cumulative_offset = 0.0
-    if all_months_data:
-        cumulative_offset = await sensor.get_sum_before(
-            statistic_id_kw, first_timestamp(all_months_data[0]["data_points"])
-        )
+    cumulative_offset = await sensor.get_sum_before(statistic_id_kw, oldest)
     _LOGGER.warning(f"[EnelGrid Historical] Starting with cumulative offset: {cumulative_offset:.2f} kWh")
 
     for month_data in all_months_data:
@@ -196,7 +195,7 @@ async def historical_fetch_task(hass, entry, sensor):
                 exc_info=True
             )
 
-    # Mark as completed
+    # Mark as completed (only reached when at least one month was fetched)
     new_data = dict(entry.data)
     new_data["historical_fetch_needed"] = False
     new_data["historical_fetch_completed"] = True
@@ -206,6 +205,23 @@ async def historical_fetch_task(hass, entry, sensor):
         f"[EnelGrid Historical] ✅ Historical fetch completed! "
         f"Total: {months_fetched} months, {total_days} days"
     )
+    sensor.set_import_state("Imported")
+
+
+async def clear_statistics_from(hass, statistic_ids, start):
+    """Clear the given statistics from ``start`` on, in the recorder thread.
+
+    clear_statistics must not be called from an executor job (the recorder
+    rejects it as an unsafe call). Queue it and wait for the recorder, so the
+    following reads see the cleared table.
+    """
+    recorder_instance = get_instance(hass)
+    recorder_instance.async_clear_statistics(
+        statistic_ids,
+        start_time=as_utc(start),
+        end_time=dt_util.utcnow() + timedelta(days=1),
+    )
+    await recorder_instance.async_block_till_done()
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
@@ -218,36 +234,16 @@ async def async_setup_entry(hass, entry, async_add_entities):
 
     hass.data.setdefault("enelgrid_monthly_sensor", {})[entry_id] = monthly_sensor
 
-    async_add_entities([consumption_sensor, monthly_sensor])  # cost_sensor
+    # Monthly sensor first: the consumption sensor starts fetching as soon as
+    # it is added, and the fetch writes the monthly total.
+    async_add_entities([monthly_sensor, consumption_sensor])
 
     _LOGGER.warning(
         f"enelgrid sensors added: {consumption_sensor.entity_id}, {monthly_sensor.entity_id}"
     )
 
-    # Check if we need full historical fetch (after migration)
-    # Background tasks bound to the entry are cancelled when it is unloaded,
-    # so a reload does not leave an old fetch running next to the new one.
-    if entry.data.get("historical_fetch_needed", False):
-        _LOGGER.warning("[EnelGrid] Historical fetch needed, starting background task...")
-        entry.async_create_background_task(
-            hass,
-            historical_fetch_task(hass, entry, consumption_sensor),
-            "enelgrid historical fetch",
-        )
-    else:
-        # Normal behavior: immediately fetch current data
-        entry.async_create_background_task(
-            hass, consumption_sensor.async_update(), "enelgrid update"
-        )
-
-    # Set up daily update; stop it when the entry is unloaded, otherwise
-    # every reload adds one more daily login and import.
-    async def daily_update_callback(_):
-        await consumption_sensor.async_update()
-
-    entry.async_on_unload(
-        async_track_time_interval(hass, daily_update_callback, SCAN_INTERVAL)
-    )
+    # The consumption sensor starts the first fetch and the daily timer from
+    # async_added_to_hass, so they belong to the entity and stop with it.
 
 
 class EnelGridConsumptionSensor(SensorEntity):
@@ -255,6 +251,7 @@ class EnelGridConsumptionSensor(SensorEntity):
 
     def __init__(self, hass, entry):
         self.hass = hass
+        self._entry = entry
         self.entry_id = entry.entry_id
         self._username = entry.data[CONF_USERNAME]
         self._password = entry.data[CONF_PASSWORD]
@@ -262,8 +259,8 @@ class EnelGridConsumptionSensor(SensorEntity):
         self._numero_utente = entry.data[CONF_USER_NUMBER]
         self._price_per_kwh = entry.data[CONF_PRICE_PER_KWH]
         self._attr_name = "enelgrid Daily Import"
-        # Updates are driven by the daily timer in async_setup_entry; entity
-        # polling (SCAN_INTERVAL) would log in and import a second time.
+        # Updates are driven by the daily timer set up in async_added_to_hass;
+        # entity polling would log in and import a second time.
         self._attr_should_poll = False
         self._state = None
         self.session = None
@@ -271,6 +268,30 @@ class EnelGridConsumptionSensor(SensorEntity):
     @property
     def state(self):
         return self._state
+
+    async def async_added_to_hass(self):
+        """Start the first fetch and the daily update once the entity exists."""
+        if self._entry.data.get("historical_fetch_needed", False):
+            _LOGGER.warning("[EnelGrid] Historical fetch needed, starting background task...")
+            first = historical_fetch_task(self.hass, self._entry, self)
+        else:
+            first = self.async_update()
+        # Entry background tasks are cancelled when the entry is unloaded.
+        self._entry.async_create_background_task(self.hass, first, "enelgrid first fetch")
+
+        async def daily_update(_now):
+            await self.async_update()
+
+        self.async_on_remove(
+            async_track_time_interval(self.hass, daily_update, SCAN_INTERVAL)
+        )
+
+    @callback
+    def set_import_state(self, state):
+        """Set the import status and write it, if the entity is added."""
+        self._state = state
+        if self.hass is not None and self.entity_id and self.platform is not None:
+            self.async_write_ha_state()
 
     async def async_update(self):
         try:
@@ -308,6 +329,8 @@ class EnelGridConsumptionSensor(SensorEntity):
         finally:
             if self.session:
                 await self.session.close()
+            # should_poll is False, so nothing else writes the state.
+            self.set_import_state(self._state)
 
     async def save_to_home_assistant(
         self, all_data_by_date, pod, entry_id, price_per_kwh, cumulative_offset=None

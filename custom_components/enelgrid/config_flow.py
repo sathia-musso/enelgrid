@@ -22,7 +22,7 @@ _LOGGER = logging.getLogger(__name__)
 class EnelGridConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for enelgrid."""
 
-    VERSION = 4
+    VERSION = 5
 
     def __init__(self):
         self.reauth_entry = None
