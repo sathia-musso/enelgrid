@@ -545,6 +545,15 @@ def first_timestamp(all_data_by_date):
 
 def parse_enel_hourly_data(data):
     """Extract all hourly data into per-day structure, preserving cross-day cumulative values."""
+    if data.get("data") is None and data.get("status"):
+        # Enel answers {"data": null, "status": {"result": "AUT02", ...}} when it
+        # rejects the request (e.g. a user number that does not match the POD).
+        status = data["status"]
+        raise HomeAssistantError(
+            "Enel rejected the consumption request: "
+            f"{status.get('description', '?')} ({status.get('result', '?')}). "
+            "Check the POD and the user number."
+        )
     aggregations = (
         data.get("data", {}).get("aggregationResult", {}).get("aggregations", [])
     )
